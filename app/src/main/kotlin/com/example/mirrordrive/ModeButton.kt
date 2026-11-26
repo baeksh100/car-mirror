@@ -57,12 +57,19 @@ fun buildModeButton(context: Context, onClick: () -> Unit): View {
  * 창 모드 button, but with a mirror-cyan "✕" glyph. Tapping it quits the app entirely (the
  * caller wires this to a full shutdown). Sits next to 창 모드 in the top area.
  */
-fun buildQuitButton(context: Context, onClick: () -> Unit): View {
+fun buildQuitButton(context: Context, onClick: () -> Unit): View =
+    buildGlyphButton(context, "✕", "종료", onClick)
+
+/** ⚙ settings chip — always visible, also while mirroring (the long-press entry is not). */
+fun buildSettingsButton(context: Context, onClick: () -> Unit): View =
+    buildGlyphButton(context, "⚙", "설정", onClick)
+
+private fun buildGlyphButton(context: Context, glyph: String, desc: String, onClick: () -> Unit): View {
     val touch = context.dp(48)          // fixed touch target
     val chipInset = context.dp(8)       // shrinks the visible chip inside the touch target
 
     return TextView(context).apply {
-        text = "✕"
+        text = glyph
         setTextColor(controlGlyphColors())
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
         typeface = Typeface.DEFAULT     // lighter weight — thin, refined glyph, matches overlay
@@ -72,7 +79,7 @@ fun buildQuitButton(context: Context, onClick: () -> Unit): View {
         background = controlChipBackground(context, chipInset)
         isClickable = true
         isFocusable = true
-        contentDescription = "종료"
+        contentDescription = desc
         minimumWidth = touch
         minimumHeight = touch
         minWidth = touch
