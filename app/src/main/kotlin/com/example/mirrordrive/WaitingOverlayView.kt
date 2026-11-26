@@ -39,6 +39,12 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
     var onSettings: (() -> Unit)? = null
     private val debugText: TextView
     private var deviceInfoComplete = false
+    // Music mode: the connect column is swapped for a calm equalizer while only sound is playing.
+    private val column: LinearLayout
+    private val musicBox: LinearLayout
+    private val visualizer = MusicVisualizerView(context)
+    private val musicLabel: TextView
+    private var musicMode = false
 
     private var fadeAnim: ValueAnimator? = null
     private var shown = true
@@ -163,7 +169,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
             LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(10) },
         )
 
-        val column = LinearLayout(context).apply {
+        column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(context.dp(16), context.dp(8), context.dp(16), context.dp(10))
@@ -172,6 +178,50 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         (center as LinearLayout).gravity = Gravity.CENTER
         column.addView(bottomStack, LinearLayout.LayoutParams(WRAP, WRAP))
         addView(column, LayoutParams(MATCH_PARENT, MATCH_PARENT))
+
+        // Music mode: equalizer + one quiet line. No buttons here, so there is nothing to tap
+        // while driving; the settings long-press stays on the normal waiting screen.
+        musicLabel = TextView(context).apply {
+            setTextColor(Palette.SILVER_DIM)
+            typeface = Typeface.SANS_SERIF
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            letterSpacing = 0.04f
+            gravity = Gravity.CENTER
+            text = "♪ 음악 재생 중"
+        }
+        musicBox = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(context.dp(48), context.dp(24), context.dp(48), context.dp(24))
+            visibility = GONE
+            addView(visualizer, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+            addView(musicLabel, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(12) })
+        }
+        addView(musicBox, LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    }
+
+    /**
+     * Swap between the connect/diagnostic column and the music visualizer (see
+     * [showMusicVisualizer]). [iphoneName] is shown under the equalizer when known. Idempotent.
+     */
+    fun setMusicMode(on: Boolean, iphoneName: String? = null) {
+        val label = if (iphoneName.isNullOrBlank()) "♪ 음악 재생 중" else "♪ ${iphoneName}에서 음악 재생 중"
+        if (musicLabel.text != label) musicLabel.text = label
+        if (on == musicMode) return
+        musicMode = on
+        if (on) {
+            ripple.stop()
+            column.visibility = GONE
+            musicBox.visibility = VISIBLE
+            visualizer.start()
+            contentDescription = "음악 재생 중"
+        } else {
+            visualizer.stop()
+            musicBox.visibility = GONE
+            column.visibility = VISIBLE
+            if (shown) ripple.start()
+            contentDescription = "미러링 대기 중"
+        }
     }
 
     /** Update the on-screen diagnostic line (test builds). No-op-safe to call every tick. */
@@ -205,6 +255,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         if (!shown) return
         shown = false
         ripple.stop()
+        visualizer.stop()
         animateTo(0f) { visibility = GONE }
     }
 
@@ -213,7 +264,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         if (shown && visibility == VISIBLE) return
         shown = true
         visibility = VISIBLE
-        ripple.start()
+        if (musicMode) visualizer.start() else ripple.start()
         animateTo(1f, null)
     }
 
@@ -222,6 +273,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         shown = false
         fadeAnim?.cancel()
         ripple.stop()
+        visualizer.stop()
         alpha = 0f
         visibility = GONE
     }

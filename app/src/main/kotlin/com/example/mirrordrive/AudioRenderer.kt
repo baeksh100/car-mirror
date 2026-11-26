@@ -160,6 +160,8 @@ class AudioRenderer(
                             track?.write(pcm, 0, pcm.size)
                             hwOut++
                             onPcm(pcm.size)
+                            // Music visualizer levels; never allowed to disturb playback.
+                            runCatching { AudioMeter.feedBytes(pcm) }
                         }
                         mc.releaseOutputBuffer(i, false)
                     } catch (e: IllegalStateException) {
@@ -215,6 +217,7 @@ class AudioRenderer(
         val t = track ?: return
         runCatching { t.write(pcm, 0, pcm.size, AudioTrack.WRITE_NON_BLOCKING) }
         onPcm(pcm.size * 2)
+        runCatching { AudioMeter.feed(pcm) }
     }
 
     private fun buildAudioTrack(): Boolean {

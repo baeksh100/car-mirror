@@ -329,6 +329,12 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateWaiting() {
         val live = lastFrameMs != 0L && SystemClock.uptimeMillis() - lastFrameMs < 1500
+        // Music only (iPhone screen idle, sound still flowing): show the equalizer instead of the
+        // connect guidance. Never shown over live video or in window mode.
+        waitingOverlay.setMusicMode(
+            showMusicVisualizer(CarSettings.musicVisualizer(this), live, AudioMeter.musicPlaying()),
+            Session.iphoneName,
+        )
         when {
             overlayActive -> waitingOverlay.hideImmediate()
             live -> waitingOverlay.fadeOut()
@@ -401,6 +407,11 @@ class MainActivity : AppCompatActivity() {
             isChecked = CarSettings.nightDim(this@MainActivity)
         }
         box.addView(dim)
+        val viz = android.widget.CheckBox(this).apply {
+            text = "음악만 나올 때 음악 파형 보여 주기"
+            isChecked = CarSettings.musicVisualizer(this@MainActivity)
+        }
+        box.addView(viz)
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("CarMirror 설정")
             .setView(box)
@@ -409,6 +420,7 @@ class MainActivity : AppCompatActivity() {
                 CarSettings.setReceiverName(this, nameEdit.text.toString())
                 CarSettings.setAutoStart(this, auto.isChecked)
                 CarSettings.setNightDim(this, dim.isChecked)
+                CarSettings.setMusicVisualizer(this, viz.isChecked)
                 updateNightDim()
                 if (CarSettings.receiverName(this) != old) {
                     runCatching {
