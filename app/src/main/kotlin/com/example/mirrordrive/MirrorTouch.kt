@@ -12,7 +12,7 @@ import kotlin.math.hypot
  * fraction of the iPhone screen: the pointer is pinned to the top-left corner and then moved
  * the calibrated distance. Tap = tap, hold = long press, drag = press-and-drag (swipe/scroll).
  *
- * Only active when 설정 → 블루투스 마우스 시험 → "미러링 화면을 눌러서 아이폰 조작하기" is on
+ * Only active when 설정 → 아이폰 터치 조작 → "미러링 화면을 눌러서 아이폰 조작하기" is on
  * and an iPhone is connected; otherwise touches pass through untouched.
  */
 class MirrorTouch(

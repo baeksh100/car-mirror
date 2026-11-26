@@ -22,7 +22,7 @@ import androidx.appcompat.app.AppCompatActivity
 import kotlin.math.hypot
 
 /**
- * Experimental test screen (opened from 설정 → "블루투스 마우스 시험"): checks whether this box
+ * Experimental test screen (opened from 설정 → "아이폰 터치 조작"): checks whether this box
  * can act as a Bluetooth mouse for the iPhone, and lets you drive the iPhone's AssistiveTouch
  * pointer from a touch pad on the car screen. Nothing here touches mirroring.
  */
@@ -91,7 +91,7 @@ class MouseTestActivity : AppCompatActivity() {
         val scroll = ScrollView(this).apply { addView(col) }
         root.addView(scroll, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.42f))
 
-        col.addView(text("블루투스 마우스 시험 (실험)", 20f, Palette.MIRROR))
+        col.addView(text("아이폰 터치 조작 (블루투스 마우스)", 20f, Palette.MIRROR))
         status = text("", 15f, Palette.SILVER).also { col.addView(it) }
         col.addView(text(
             "아이폰 준비: 설정 → 손쉬운 사용 → 터치 → AssistiveTouch 켜기. " +
