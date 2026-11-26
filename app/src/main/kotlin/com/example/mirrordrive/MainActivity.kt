@@ -429,6 +429,10 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .setNegativeButton("취소", null)
+            // Experimental: drive the iPhone from the car screen as a Bluetooth mouse.
+            .setNeutralButton("블루투스 마우스 시험") { _, _ ->
+                runCatching { startActivity(Intent(this, MouseTestActivity::class.java)) }
+            }
             .show()
     }
 
