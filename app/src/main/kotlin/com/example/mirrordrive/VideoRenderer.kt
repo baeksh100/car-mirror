@@ -65,7 +65,7 @@ class VideoRenderer(
                     lastSetSurface = "swap:valid=${s.isValid}"
                 } catch (e: IllegalStateException) {
                     lastSetSurface = "swapFAIL:${e.message}"
-                    Log.w("MirrorDrive", "setOutputSurface failed: ${e.message}")
+                    Log.w("CarMirror", "setOutputSurface failed: ${e.message}")
                 }
             } else {
                 lastSetSurface = "record:cfg=$configured"
@@ -123,7 +123,7 @@ class VideoRenderer(
         } catch (e: IllegalStateException) {
             // A codec/surface teardown (or CodecException) can race with this async
             // callback; abandon draining rather than crash the codec thread.
-            Log.w("MirrorDrive", "drain aborted: ${e.message}")
+            Log.w("CarMirror", "drain aborted: ${e.message}")
         }
     }
 
@@ -156,12 +156,12 @@ class VideoRenderer(
             }
             override fun onOutputFormatChanged(mc: MediaCodec, f: MediaFormat) {
                 val (w, h) = decodedVideoSize(f)
-                Log.i("MirrorDrive", "video output format: ${w}x$h")
+                Log.i("CarMirror", "video output format: ${w}x$h")
                 onVideoSize(w, h)
             }
             override fun onError(mc: MediaCodec, e: MediaCodec.CodecException) {
                 lastError = "code=${e.errorCode}"
-                Log.e("MirrorDrive", "MediaCodec error code=${e.errorCode} diag=${e.diagnosticInfo}", e)
+                Log.e("CarMirror", "MediaCodec error code=${e.errorCode} diag=${e.diagnosticInfo}", e)
             }
         }, handler)
         c.configure(fmt, s, null, 0)
@@ -169,7 +169,7 @@ class VideoRenderer(
         codec = c
         codecThread = thread
         configured = true
-        Log.i("MirrorDrive", "codec configured name=${c.name} sps=${sps.size} pps=${pps.size}")
+        Log.i("CarMirror", "codec configured name=${c.name} sps=${sps.size} pps=${pps.size}")
         return true
     }
 

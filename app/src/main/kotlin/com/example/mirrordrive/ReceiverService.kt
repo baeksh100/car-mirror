@@ -44,14 +44,14 @@ class ReceiverService : Service() {
     override fun onStartCommand(i: Intent?, f: Int, id: Int) = START_STICKY
 
     private fun startAsForeground() {
-        val chId = "mirrordrive"
+        val chId = "carmirror"
         if (Build.VERSION.SDK_INT >= 26) {
-            val ch = NotificationChannel(chId, "MirrorDrive", NotificationManager.IMPORTANCE_LOW)
+            val ch = NotificationChannel(chId, "CarMirror", NotificationManager.IMPORTANCE_LOW)
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(ch)
         }
         val n = NotificationCompat.Builder(this, chId)
-            .setContentTitle("MirrorDrive").setContentText("Ready to mirror")
+            .setContentTitle("CarMirror").setContentText("아이폰 화면 미러링 대기 중")
             .setSmallIcon(android.R.drawable.stat_sys_upload).build()
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)

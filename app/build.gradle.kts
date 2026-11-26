@@ -7,11 +7,11 @@ android {
     compileSdk = 34
     ndkVersion = "26.3.11579264"
     defaultConfig {
-        applicationId = "com.example.mirrordrive.car"
+        applicationId = "app.carmirror"
         minSdk = 29
         targetSdk = 32
-        versionCode = 14
-        versionName = "0.92-car4"
+        versionCode = 15
+        versionName = "0.92-car5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
@@ -33,7 +33,6 @@ android {
 }
 dependencies {
     implementation("org.jmdns:jmdns:3.6.1")
-    implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     testImplementation("junit:junit:4.13.2")

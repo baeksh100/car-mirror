@@ -1,10 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  MirrorDrive launcher background — the "night dashboard" ground.
-  Deep night ink (#0B0F14) with a very subtle radial lift toward the raised
-  surface tone (#141B22) in the upper-center, so the mark appears to sit over a
-  soft glow rather than a flat field. Fills the full 108dp adaptive canvas.
--->
+<!-- CarMirror launcher background: deep night ink with a subtle radial lift. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"

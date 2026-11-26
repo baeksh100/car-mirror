@@ -39,7 +39,7 @@ class ErrorActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             gravity = Gravity.START
 
-            val headline = "MirrorDrive stopped. Screenshot this and send it to support.\n\n"
+            val headline = "CarMirror가 멈췄어요. 이 화면을 사진으로 찍어 두세요.\n\n"
             val styled = android.text.SpannableString(headline + message)
             styled.setSpan(
                 android.text.style.ForegroundColorSpan(mirror),
@@ -59,6 +59,6 @@ class ErrorActivity : Activity() {
     private fun density(): Float = resources.displayMetrics.density
 
     companion object {
-        const val EXTRA_MESSAGE = "com.example.mirrordrive.ERROR_MESSAGE"
+        const val EXTRA_MESSAGE = "carmirror.ERROR_MESSAGE"
     }
 }

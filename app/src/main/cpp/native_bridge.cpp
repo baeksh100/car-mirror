@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <android/log.h>
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "MirrorDrive", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "MirrorDrive", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "CarMirror", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "CarMirror", __VA_ARGS__)
 
 MirrorContext g_ctx;
 JavaVM *g_vm = nullptr;
@@ -48,7 +48,7 @@ Java_com_example_mirrordrive_NativeBridge_setAudioSink(JNIEnv *env, jobject, job
 // Route UxPlay's internal logger to logcat so init failures are visible.
 static void raop_log_cb(void *cls, int level, const char *msg) {
     (void)cls;
-    __android_log_print(ANDROID_LOG_INFO, "MirrorDrive-raop", "[%d] %s", level, msg);
+    __android_log_print(ANDROID_LOG_INFO, "CarMirror-raop", "[%d] %s", level, msg);
 }
 
 extern "C" JNIEXPORT jstring JNICALL

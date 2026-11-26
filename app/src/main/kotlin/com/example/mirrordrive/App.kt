@@ -28,7 +28,7 @@ class App : Application() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, err ->
             val header = buildString {
-                append("MirrorDrive crash\n")
+                append("CarMirror crash\n")
                 append("device: ${Build.MANUFACTURER} ${Build.MODEL}\n")
                 append("sdk: ${Build.VERSION.SDK_INT}\n")
                 append("abis: ${Build.SUPPORTED_ABIS.joinToString(",")}\n")

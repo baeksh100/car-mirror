@@ -427,7 +427,7 @@ class OverlayController(context: Context) {
         const val WRAP = FrameLayout.LayoutParams.WRAP_CONTENT
 
         // Persisted floating-window geometry: size scale (longer-edge px) + top-left position.
-        const val PREFS = "mirrordrive_overlay"
+        const val PREFS = "carmirror_overlay"
         const val KEY_BOX = "win_box"
         const val KEY_X = "win_x"
         const val KEY_Y = "win_y"

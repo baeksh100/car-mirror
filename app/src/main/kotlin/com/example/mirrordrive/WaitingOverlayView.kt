@@ -23,15 +23,15 @@ import android.widget.TextView
 
 /**
  * The pre-mirror waiting state, shown on top of the black video root before any frames arrive
- * and again if the stream stops. Night-ink field with a radiating [RippleSignalView], the
- * wide-tracked MIRRORDRIVE wordmark, a hint on how to connect from the iPhone, and — pinned to
- * the bottom — a live-signal dot with the device id and IP:port in monospace.
+ * and again if the stream stops. Night-ink field with the pulsing CarMirror mark, the
+ * CARMIRROR wordmark, a hint on how to connect from the iPhone, and — below — a live-signal dot
+ * with the device id and address in monospace plus the diagnostic line.
  *
  * It owns no video/surface state: [MainActivity] fades it in/out purely from a first-frame
  * signal, so it can never affect how frames reach the decoder.
  */
 class WaitingOverlayView(context: Context) : FrameLayout(context) {
-    private val ripple = RippleSignalView(context)
+    private val ripple = PulseIcon(context)
     private val deviceLine: TextView
     private val debugText: TextView
     private var deviceInfoComplete = false
@@ -77,7 +77,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         )
         // Car-context caveat: the iPhone cannot run wireless CarPlay and screen mirroring at the
         // same time (an iOS restriction, not ours). On a CarPlay box that's the #1 reason the phone
-        // never finds MirrorDrive, so we say it here where the user is already looking + waiting.
+        // never finds the receiver, so we say it here where the user is already looking + waiting.
         center.addView(
             TextView(context).apply {
                 text = "무선 카플레이 사용 중엔 연결되지 않아요 · 카플레이를 끄고 연결하세요"
@@ -94,56 +94,10 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         // (CENTER and BOTTOM gravity); on a short, wide car display they overlapped. They now
         // live in one vertical column: centre takes the remaining space, bottom wraps below it.
 
-        // Bottom cluster (vertical, centred): scannable QR card, device identity, feedback link.
+        // Bottom cluster (vertical, centred): device identity + diagnostics.
         val bottomStack = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-        }
-
-        // Feedback QR — pinned to the RIGHT edge, vertically centred, in its own stack (card +
-        // caption) so it never overlaps the centred text or the bottom cluster. Dark-on-light
-        // rounded card for scannability. Cached + built in a try/catch, so any encoding failure
-        // simply omits the QR instead of crashing.
-        (if (SHOW_FEEDBACK) feedbackQr(context) else null)?.let { qr ->
-            val pad = context.dp(8)
-            val qrStack = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-            val card = FrameLayout(context).apply {
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = context.dpf(10f)
-                    setColor(QR_CARD)
-                }
-                setPadding(pad, pad, pad, pad)
-                contentDescription = "의견 보내기 QR 코드"
-                addView(
-                    ImageView(context).apply {
-                        setImageBitmap(qr)
-                        scaleType = ImageView.ScaleType.FIT_CENTER
-                    },
-                    FrameLayout.LayoutParams(context.dp(112), context.dp(112)),
-                )
-            }
-            qrStack.addView(card, LinearLayout.LayoutParams(WRAP, WRAP))
-            qrStack.addView(
-                TextView(context).apply {
-                    text = "QR 스캔 · 의견 보내기"
-                    setTextColor(Palette.SILVER_DIM)
-                    typeface = Typeface.SANS_SERIF
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    letterSpacing = 0.04f
-                    gravity = Gravity.CENTER
-                },
-                LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(6) },
-            )
-            addView(
-                qrStack,
-                LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                    marginEnd = context.dp(20)
-                },
-            )
         }
 
         // Live dot + device identity in monospace.
@@ -170,26 +124,6 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
             status,
             LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(4) },
         )
-
-        // Quiet "피드백" link for this app's own user — a restrained mirror-cyan text link (not a
-        // loud button) that opens the same feedback form in the browser. ≥44dp touch target.
-        val feedback = TextView(context).apply {
-            text = "피드백"
-            contentDescription = "의견 보내기"
-            setTextColor(Palette.MIRROR)
-            typeface = Typeface.SANS_SERIF
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            letterSpacing = 0.06f
-            gravity = Gravity.CENTER
-            minHeight = context.dp(44)
-            minWidth = context.dp(44)
-            setPadding(context.dp(16), context.dp(12), context.dp(16), context.dp(4))
-            isClickable = true
-            isFocusable = true
-            background = RippleDrawable(ColorStateList.valueOf(Palette.MIRROR_RIPPLE), null, null)
-            setOnClickListener { openFeedbackForm(context) }
-        }
-        if (SHOW_FEEDBACK) bottomStack.addView(feedback, LinearLayout.LayoutParams(WRAP, WRAP))
 
         // Tiny diagnostic line (test builds): decoder/surface state, so a stuck waiting screen can
         // be screenshotted and read. Invisible in normal use — if mirroring works this view is faded
@@ -221,20 +155,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
     /** Update the on-screen diagnostic line (test builds). No-op-safe to call every tick. */
     fun setDebug(text: String) { debugText.text = text }
 
-    /** Open the feedback form in the browser. NEW_TASK because the waiting view runs inside an
-     *  activity/overlay; try/catch so a device with no browser fails quietly instead of crashing. */
-    private fun openFeedbackForm(context: Context) {
-        try {
-            context.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(FEEDBACK_URL))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-        } catch (e: Exception) {
-            // No browser / no handling activity — ignore rather than crash the waiting screen.
-        }
-    }
-
-    /** Read device id / port / Wi-Fi IPv4 (safe before native init: shows "—"), until complete. */
+    /** Read device id / port / local address (safe before native init: shows "—"). */
     fun refreshDeviceInfoIfNeeded() {
         // CarMirror: keep refreshing — the address changes when the hotspot connects later.
         val id = runCatching { NativeBridge.nativeGetDeviceId() }.getOrNull()?.takeIf { it.isNotBlank() }
@@ -287,18 +208,6 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
     private companion object {
         const val WRAP = LayoutParams.WRAP_CONTENT
         const val MATCH_PARENT = LayoutParams.MATCH_PARENT
-        // The feedback QR/link point at the upstream MirrorDrive author's form; hidden in CarMirror.
-        const val SHOW_FEEDBACK = false
-        const val FEEDBACK_URL = "https://forms.gle/iwziaX1fZ5CToPyD7"
-        const val QR_CARD = 0xFFEAEEF0.toInt()   // light card so the QR stays scannable
-
-        // Encode the feedback-form QR once and cache it across view (re)creations.
-        private var qrCache: Bitmap? = null
-        fun feedbackQr(context: Context): Bitmap? {
-            qrCache?.let { return it }
-            return encodeQr(FEEDBACK_URL, context.dp(112), Palette.GROUND, QR_CARD)
-                .also { qrCache = it }
-        }
     }
 }
 
@@ -345,4 +254,26 @@ private class LiveDotView(context: Context) : View(context) {
         core.alpha = 255
         canvas.drawCircle(cx, cy, coreR, core)
     }
+}
+
+/** The CarMirror mark (launcher foreground) with a slow breathing pulse while waiting. */
+private class PulseIcon(context: Context) : ImageView(context) {
+    private var anim: ValueAnimator? = null
+    init {
+        setImageResource(R.drawable.ic_launcher_foreground)
+        scaleType = ScaleType.FIT_CENTER
+        contentDescription = "CarMirror"
+        start()
+    }
+    fun start() {
+        if (anim?.isRunning == true) return
+        anim = ValueAnimator.ofFloat(0.55f, 1f).apply {
+            duration = 1400
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener { alpha = it.animatedValue as Float }
+            start()
+        }
+    }
+    fun stop() { anim?.cancel(); anim = null; alpha = 1f }
 }

@@ -272,7 +272,7 @@ class AudioRenderer(
     }
 
     private companion object {
-        const val TAG = "MirrorDrive"
+        const val TAG = "CarMirror"
         const val SAMPLE_RATE = 44100
         const val CHANNELS = 2
         const val HW_WATCHDOG_FRAMES = 60   // ~0.7 s of ELD audio at 480 samples/frame

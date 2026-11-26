@@ -196,12 +196,12 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showNativeUnavailable() {
         val msg = buildString {
-            append("This device's CPU/ABI isn't supported by MirrorDrive.\n\n")
+            append("이 기기의 CPU(ABI)는 CarMirror를 지원하지 않아요.\n\n")
             append("device: ${Build.MANUFACTURER} ${Build.MODEL}\n")
             append("sdk: ${Build.VERSION.SDK_INT}\n")
             append("abis: ${Build.SUPPORTED_ABIS.joinToString(",")}\n\n")
-            append("The MirrorDrive native library could not be loaded on this hardware. ")
-            append("Screenshot this and send it to support.")
+            append("CarMirror 네이티브 라이브러리를 이 기기에서 불러오지 못했어요. ")
+            append("이 화면을 사진으로 찍어 두세요.")
         }
         Log.e(TAG, "native unavailable: $msg")
         runCatching {
@@ -321,7 +321,7 @@ class MainActivity : AppCompatActivity() {
             val age = if (lastFrameMs == 0L) "-" else "${SystemClock.uptimeMillis() - lastFrameMs}ms"
             val fsSurf = if (::surfaceView.isInitialized && surfaceView.holder.surface?.isValid == true) 1 else 0
             val codec = if (::videoRenderer.isInitialized) videoRenderer.debugLine() else "-"
-            waitingOverlay.setDebug("car4 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
+            waitingOverlay.setDebug("car5 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
         }
     }
 

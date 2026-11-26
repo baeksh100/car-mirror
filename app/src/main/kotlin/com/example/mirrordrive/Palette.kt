@@ -4,7 +4,7 @@ import android.content.Context
 import kotlin.math.roundToInt
 
 /**
- * The single deliberate visual world for MirrorDrive: a night dashboard built around
+ * The single deliberate visual world for CarMirror: a night dashboard built around
  * reflection / glass / stream imagery. Defined once here so every UI surface (waiting screen,
  * 창 모드 pill, floating-overlay controls) speaks the same language.
  *
