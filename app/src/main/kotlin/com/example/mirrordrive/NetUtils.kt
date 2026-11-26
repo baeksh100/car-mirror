@@ -1,54 +1,94 @@
 package com.example.mirrordrive
 
 import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 
-/** One usable local IPv4 address and the interface it lives on. */
+/** One usable local address and the interface it lives on. */
 data class LocalAddr(val ifName: String, val addr: InetAddress) {
+    val isV6: Boolean get() = addr is Inet6Address
     val text: String get() = "${addr.hostAddress}($ifName)"
 }
 
-// Cellular modems, VPN tunnels and dummy links can never be reached by the iPhone over Wi-Fi.
+// Cellular modems, VPN tunnels, dummy links and the CLAT (464XLAT) shim can never be reached by
+// the iPhone over Wi-Fi. "v4-" is CLAT: its 192.0.0.x address exists only inside this device.
 private val EXCLUDED_IF_PREFIXES = listOf("rmnet", "ccmni", "tun", "dummy", "ppp", "ipsec", "clat", "v4-")
 
+private fun excludedIf(name: String) = EXCLUDED_IF_PREFIXES.any { name.startsWith(it) }
+
 /**
- * Lower = better. Car head units / cast boxes often expose several site-local IPv4 links at once
- * (internal Ethernet to the head unit, USB tethering, Wi-Fi). The original code advertised only the
- * FIRST one it found, so on such boxes the iPhone could be handed an unreachable address. We now
- * rank them and advertise on every candidate, preferring the iPhone Personal Hotspot subnet.
+ * Lower = better. Prefer the iPhone Personal Hotspot IPv4 subnet, then Wi-Fi, then others.
+ * IPv6 candidates rank after any IPv4 on the same kind of link.
  */
-private fun rank(ifName: String, addr: InetAddress): Int {
-    val ip = addr.hostAddress ?: ""
-    return when {
-        ip.startsWith("172.20.10.") -> 0                       // iPhone Personal Hotspot subnet
-        ifName.startsWith("wlan") -> 1
-        ifName.startsWith("ap") || ifName.startsWith("swlan") || ifName.startsWith("softap") -> 2
-        ifName.startsWith("p2p") -> 4
-        ifName.startsWith("eth") || ifName.startsWith("usb") || ifName.startsWith("rndis") -> 5
+private fun rank(la: LocalAddr): Int {
+    val ip = la.addr.hostAddress ?: ""
+    val n = la.ifName
+    val base = when {
+        ip.startsWith("172.20.10.") -> 0
+        n.startsWith("wlan") -> 1
+        n.startsWith("ap") || n.startsWith("swlan") || n.startsWith("softap") -> 2
+        n.startsWith("p2p") -> 4
+        n.startsWith("eth") || n.startsWith("usb") || n.startsWith("rndis") -> 5
         else -> 3
     }
+    return base * 2 + if (la.isV6) 1 else 0
 }
 
 /**
- * All site-local IPv4 addresses the iPhone could plausibly reach, best first.
+ * Addresses the iPhone could reach, best first — at most one per interface, so each interface gets
+ * exactly one mDNS responder (two on one link would fight over the same name).
  *
- * car3: first car test showed Wi-Fi joined to the iPhone hotspot yet NetworkInterface enumeration
- * returned nothing usable (Android 11+ restricts the netlink calls it relies on for apps targeting
- * API 30+, and some head-unit ROMs lock it down further). So the primary source is now the official
- * ConnectivityManager LinkProperties API; NetworkInterface and WifiInfo are fallbacks.
+ * car4: the real car test showed `wlan0:v6only v4-wlan0:192.0.0.4` — the iPhone hotspot handed the
+ * box ONLY IPv6 (Android then runs a CLAT shim for outbound IPv4). There is no LAN IPv4 at all, so
+ * an IPv4-only receiver can never be found. For interfaces with no usable IPv4 we now advertise
+ * their IPv6 link-local address (always present, always on-link, carries the interface scope);
+ * UxPlay's httpd already listens on IPv6 and iOS AirPlay happily connects over link-local v6.
  */
-fun candidateIpv4s(): List<LocalAddr> {
-    val merged = LinkedHashMap<String, LocalAddr>()
-    for (la in fromLinkProperties() + fromNetworkInterfaces() + fromWifiInfo()) {
-        val ip = la.addr.hostAddress ?: continue
-        if (ip !in merged) merged[ip] = la
+fun candidateAddrs(): List<LocalAddr> {
+    val all = (fromNetworkInterfaces() + fromLinkProperties() + fromWifiInfo())
+        .filterNot { excludedIf(it.ifName) }
+    val perIf = LinkedHashMap<String, LocalAddr>()
+    for (la in all.sortedBy { addrPref(it) }) {
+        val key = la.ifName.substringBefore("(")
+        if (key !in perIf) perIf[key] = la
     }
-    return merged.values.sortedBy { rank(it.ifName, it.addr) }
+    return perIf.values.sortedBy { rank(it) }
 }
 
-private fun usable(ifName: String, a: InetAddress) =
-    a is Inet4Address && a.isSiteLocalAddress && EXCLUDED_IF_PREFIXES.none { ifName.startsWith(it) }
+/** Within one interface: site-local IPv4 > IPv6 link-local > other IPv6. */
+private fun addrPref(la: LocalAddr): Int = when (val a = la.addr) {
+    is Inet4Address -> 0
+    is Inet6Address -> if (a.isLinkLocalAddress) 1 else 2
+    else -> 3
+}
+
+/** Backwards-compatible name used by DiscoveryService. */
+fun candidateIpv4s(): List<LocalAddr> = candidateAddrs()
+
+/** The best candidate (kept for callers that only need one address). */
+fun localIpv4(): InetAddress? = candidateAddrs().firstOrNull()?.addr
+
+/** Every candidate as short on-screen text, or null if none is up. */
+fun localIpv4String(): String? =
+    candidateAddrs().takeIf { it.isNotEmpty() }?.joinToString(" ") { shortText(it) }
+
+/** "172.20.10.3" or "fe80::1a2b%wlan0" style text, trimmed for the small screen. */
+fun shortText(la: LocalAddr): String = la.addr.hostAddress ?: "?"
+
+private fun usableV4(a: InetAddress) = a is Inet4Address && a.isSiteLocalAddress
+private fun usableV6(a: InetAddress) = a is Inet6Address && !a.isLoopbackAddress && !a.isMulticastAddress
+
+private fun fromNetworkInterfaces(): List<LocalAddr> = runCatching {
+    NetworkInterface.getNetworkInterfaces().asSequence()
+        .filter { it.isUp && !it.isLoopback && !it.isVirtual && !excludedIf(it.name) }
+        .flatMap { nif ->
+            nif.inetAddresses.asSequence()
+                .filter { usableV4(it) || usableV6(it) }
+                .map { LocalAddr(nif.name, it) }
+        }
+        .toList()
+}.getOrDefault(emptyList())
 
 @Suppress("DEPRECATION")
 private fun fromLinkProperties(): List<LocalAddr> = runCatching {
@@ -56,8 +96,18 @@ private fun fromLinkProperties(): List<LocalAddr> = runCatching {
         as? android.net.ConnectivityManager ?: return emptyList()
     cm.allNetworks.flatMap { net ->
         val lp = cm.getLinkProperties(net) ?: return@flatMap emptyList()
-        val name = lp.interfaceName ?: "net"
-        lp.linkAddresses.map { it.address }.filter { usable(name, it) }.map { LocalAddr(name, it) }
+        val name = lp.interfaceName ?: return@flatMap emptyList()
+        if (excludedIf(name)) return@flatMap emptyList()
+        val nif = runCatching { NetworkInterface.getByName(name) }.getOrNull()
+        lp.linkAddresses.map { it.address }.mapNotNull { a ->
+            when {
+                usableV4(a) -> LocalAddr(name, a)
+                // LinkProperties drops the scope id; re-attach it so link-local v6 is bindable.
+                a is Inet6Address && usableV6(a) && nif != null ->
+                    LocalAddr(name, Inet6Address.getByAddress(null, a.address, nif))
+                else -> null
+            }
+        }
     }
 }.getOrDefault(emptyList())
 
@@ -70,39 +120,19 @@ private fun fromWifiInfo(): List<LocalAddr> = runCatching {
     val bytes = byteArrayOf((ip and 0xff).toByte(), (ip shr 8 and 0xff).toByte(),
         (ip shr 16 and 0xff).toByte(), (ip shr 24 and 0xff).toByte())
     val a = InetAddress.getByAddress(bytes)
-    if (usable("wlan", a)) listOf(LocalAddr("wlan(wifiinfo)", a)) else emptyList()
+    if (usableV4(a)) listOf(LocalAddr("wlan0(wifiinfo)", a)) else emptyList()
 }.getOrDefault(emptyList())
 
-private fun fromNetworkInterfaces(): List<LocalAddr> = runCatching {
-    NetworkInterface.getNetworkInterfaces().asSequence()
-        .filter { it.isUp && !it.isLoopback && !it.isVirtual }
-        .filter { nif -> EXCLUDED_IF_PREFIXES.none { nif.name.startsWith(it) } }
-        .flatMap { nif ->
-            nif.inetAddresses.asSequence()
-                .filterIsInstance<Inet4Address>()
-                .filter { it.isSiteLocalAddress }
-                .map { LocalAddr(nif.name, it) }
-        }
-        .toList()
-}.getOrDefault(emptyList())
-
-/** Diagnostic: what each address source sees, e.g. "lp=wlan0:172.20.10.3 ni=- wi=172.20.10.3". */
+/** Diagnostic: what each address source sees (IPv4 only, compact). */
 fun sourceDump(): String {
-    fun fmt(l: List<LocalAddr>) = if (l.isEmpty()) "-" else l.joinToString(",") { "${it.ifName}:${it.addr.hostAddress}" }
-    return "lp=${fmt(fromLinkProperties())} ni=${fmt(fromNetworkInterfaces())} wi=${fmt(fromWifiInfo())}"
+    fun fmt(l: List<LocalAddr>) = l.filterNot { it.isV6 }
+        .let { v4 -> if (v4.isEmpty()) "-" else v4.joinToString(",") { "${it.ifName}:${it.addr.hostAddress}" } }
+    return "v4 lp=${fmt(fromLinkProperties())} ni=${fmt(fromNetworkInterfaces())} wi=${fmt(fromWifiInfo())}"
 }
 
-/** The best candidate (kept for callers that only need one address). */
-fun localIpv4(): InetAddress? = candidateIpv4s().firstOrNull()?.addr
-
-/** Every candidate as on-screen text, or null if none is up. */
-fun localIpv4String(): String? =
-    candidateIpv4s().takeIf { it.isNotEmpty() }?.joinToString(" ") { it.addr.hostAddress ?: "?" }
-
 /**
- * Diagnostic: every UP interface with its IPv4 addresses, INCLUDING ones we filter out, so a
- * "no-network" screenshot tells us whether Wi-Fi is down or we are wrongly excluding a link.
- * Format: name:ip[,ip][*] where * marks an interface excluded by our filters. "none" if no IPv4.
+ * Diagnostic: every UP interface with its IPv4 addresses (or v6only), INCLUDING ones we filter
+ * out (marked *), so a screenshot tells whether Wi-Fi is down or a link is being excluded.
  */
 fun interfaceDump(): String = runCatching {
     NetworkInterface.getNetworkInterfaces().asSequence()
@@ -110,7 +140,7 @@ fun interfaceDump(): String = runCatching {
         .map { nif ->
             val v4 = nif.inetAddresses.asSequence().filterIsInstance<Inet4Address>()
                 .map { it.hostAddress }.toList()
-            val excluded = nif.isVirtual || EXCLUDED_IF_PREFIXES.any { nif.name.startsWith(it) }
+            val excluded = nif.isVirtual || excludedIf(nif.name)
             nif.name + ":" + (if (v4.isEmpty()) "v6only" else v4.joinToString(",")) + (if (excluded) "*" else "")
         }
         .joinToString(" ")

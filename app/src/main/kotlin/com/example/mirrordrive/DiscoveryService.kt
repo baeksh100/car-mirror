@@ -6,6 +6,8 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
 import java.util.concurrent.Executors
@@ -64,9 +66,68 @@ class DiscoveryService(private val context: Context) {
             val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager?
             lock = wifi?.createMulticastLock("carmirror-mdns")?.apply { setReferenceCounted(false); acquire() }
         }.onFailure { Log.w(TAG, "multicast lock unavailable", it) }
+        // car4: primary path is Android's own mDNS advertiser (NsdManager). The system daemon
+        // advertises on every interface, IPv4 AND IPv6, and follows network changes itself — which
+        // matters because the real car's iPhone hotspot gives the box IPv6 only. jmDNS (one
+        // responder per address, below) is now only the fallback if NSD fails or never answers.
+        if (!startNsd(Params(name, port, pkHex, deviceId))) startJmdns("nsd-unavailable")
+        else io.schedule({ if (nsdOk < 2 && !jmdnsMode) { stopNsd(); startJmdns("nsd-timeout") } },
+            NSD_TIMEOUT_S, TimeUnit.SECONDS)
+    }
+
+    private fun startJmdns(reason: String) {
+        if (jmdnsMode) return
+        jmdnsMode = true
+        Log.i(TAG, "using jmDNS fallback ($reason)")
         registerNetworkCallback()
-        refresh("start")
+        refresh(reason)
         poll = io.scheduleWithFixedDelay({ refresh("poll") }, POLL_S, POLL_S, TimeUnit.SECONDS)
+    }
+
+    // ---- NsdManager (system mDNS) path ------------------------------------------------------
+    private var nsd: NsdManager? = null
+    private val nsdListeners = ArrayList<NsdManager.RegistrationListener>()
+    @Volatile private var nsdOk = 0
+    @Volatile private var jmdnsMode = false
+    private val nsdNames = ArrayList<String>()
+
+    private fun startNsd(p: Params): Boolean = runCatching {
+        val mgr = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager? ?: return false
+        nsd = mgr
+        registerNsd(mgr, p.name, "_airplay._tcp", p.port, airplayTxt(p.deviceId, p.pkHex))
+        registerNsd(mgr, raopInstanceName(p.deviceId, p.name), "_raop._tcp", p.port, raopTxt(p.pkHex))
+        status = "nsd:registering"
+        true
+    }.getOrElse { Log.e(TAG, "NSD start failed", it); lastError = "nsd:${it.javaClass.simpleName}"; false }
+
+    private fun registerNsd(mgr: NsdManager, name: String, type: String, port: Int, txt: Map<String, String>) {
+        val info = NsdServiceInfo().apply {
+            serviceName = name; serviceType = type; this.port = port
+            txt.forEach { (k, v) -> setAttribute(k, v) }
+        }
+        val l = object : NsdManager.RegistrationListener {
+            override fun onServiceRegistered(si: NsdServiceInfo) {
+                nsdOk++
+                synchronized(nsdNames) { nsdNames.add(si.serviceName) }
+                status = "nsd ok($nsdOk/2) ${synchronized(nsdNames) { nsdNames.firstOrNull() }}"
+                Log.i(TAG, "NSD registered ${si.serviceName} $type")
+            }
+            override fun onRegistrationFailed(si: NsdServiceInfo, code: Int) {
+                Log.e(TAG, "NSD register failed $type code=$code")
+                lastError = "nsd:$type:$code"
+                io.execute { stopNsd(); startJmdns("nsd-failed") }
+            }
+            override fun onServiceUnregistered(si: NsdServiceInfo) {}
+            override fun onUnregistrationFailed(si: NsdServiceInfo, code: Int) {}
+        }
+        nsdListeners.add(l)
+        mgr.registerService(info, NsdManager.PROTOCOL_DNS_SD, l)
+    }
+
+    private fun stopNsd() {
+        val mgr = nsd ?: return
+        nsdListeners.forEach { runCatching { mgr.unregisterService(it) } }
+        nsdListeners.clear(); nsd = null; nsdOk = 0
     }
 
     fun stop() = io.execute {
@@ -76,6 +137,8 @@ class DiscoveryService(private val context: Context) {
             runCatching { connectivity()?.unregisterNetworkCallback(cb) }
         }
         netCallback = null
+        stopNsd()
+        jmdnsMode = false
         closeAll()
         lock?.let { if (it.isHeld) it.release() }; lock = null
         status = "stopped"
@@ -135,7 +198,7 @@ class DiscoveryService(private val context: Context) {
                 lastError = "${la.text}: ${t.javaClass.simpleName}"
             }
         }
-        status = if (instances.isEmpty()) "no-network(retrying)" else "on ${instances.keys.joinToString(",")}"
+        status = if (instances.isEmpty()) "jmdns:no-network(retrying)" else "jmdns on ${instances.keys.joinToString(",")}"
         Log.i(TAG, "discovery $status ($reason)")
     }
 
@@ -147,6 +210,7 @@ class DiscoveryService(private val context: Context) {
     companion object {
         private const val TAG = "DiscoveryService"
         private const val POLL_S = 5L
+        private const val NSD_TIMEOUT_S = 8L
 
         /** Read by the on-screen diagnostic line. */
         @Volatile var status: String = "init"

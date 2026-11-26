@@ -51,18 +51,18 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         }
         center.addView(
             ripple,
-            LinearLayout.LayoutParams(context.dp(240), context.dp(240)),
+            LinearLayout.LayoutParams(context.dp(140), context.dp(140)),
         )
         center.addView(
             TextView(context).apply {
-                text = "MIRRORDRIVE"
+                text = "CARMIRROR"
                 setTextColor(Palette.SILVER)
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
                 letterSpacing = 0.35f
                 gravity = Gravity.CENTER
             },
-            LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(20) },
+            LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(10) },
         )
         center.addView(
             TextView(context).apply {
@@ -90,10 +90,9 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
             },
             LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(8) },
         )
-        addView(
-            center,
-            LayoutParams(WRAP, WRAP, Gravity.CENTER),
-        )
+        // car3: the centre stack and the bottom cluster used to be two independent overlays
+        // (CENTER and BOTTOM gravity); on a short, wide car display they overlapped. They now
+        // live in one vertical column: centre takes the remaining space, bottom wraps below it.
 
         // Bottom cluster (vertical, centred): scannable QR card, device identity, feedback link.
         val bottomStack = LinearLayout(context).apply {
@@ -105,7 +104,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         // caption) so it never overlaps the centred text or the bottom cluster. Dark-on-light
         // rounded card for scannability. Cached + built in a try/catch, so any encoding failure
         // simply omits the QR instead of crashing.
-        feedbackQr(context)?.let { qr ->
+        (if (SHOW_FEEDBACK) feedbackQr(context) else null)?.let { qr ->
             val pad = context.dp(8)
             val qrStack = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -169,7 +168,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         )
         bottomStack.addView(
             status,
-            LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(14) },
+            LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(4) },
         )
 
         // Quiet "피드백" link for this app's own user — a restrained mirror-cyan text link (not a
@@ -190,7 +189,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
             background = RippleDrawable(ColorStateList.valueOf(Palette.MIRROR_RIPPLE), null, null)
             setOnClickListener { openFeedbackForm(context) }
         }
-        bottomStack.addView(feedback, LinearLayout.LayoutParams(WRAP, WRAP))
+        if (SHOW_FEEDBACK) bottomStack.addView(feedback, LinearLayout.LayoutParams(WRAP, WRAP))
 
         // Tiny diagnostic line (test builds): decoder/surface state, so a stuck waiting screen can
         // be screenshotted and read. Invisible in normal use — if mirroring works this view is faded
@@ -208,12 +207,15 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
             LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(10) },
         )
 
-        addView(
-            bottomStack,
-            LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-                bottomMargin = context.dp(18)
-            },
-        )
+        val column = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(context.dp(16), context.dp(8), context.dp(16), context.dp(10))
+        }
+        column.addView(center, LinearLayout.LayoutParams(WRAP, 0, 1f).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        (center as LinearLayout).gravity = Gravity.CENTER
+        column.addView(bottomStack, LinearLayout.LayoutParams(WRAP, WRAP))
+        addView(column, LayoutParams(MATCH_PARENT, MATCH_PARENT))
     }
 
     /** Update the on-screen diagnostic line (test builds). No-op-safe to call every tick. */
@@ -284,6 +286,9 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
 
     private companion object {
         const val WRAP = LayoutParams.WRAP_CONTENT
+        const val MATCH_PARENT = LayoutParams.MATCH_PARENT
+        // The feedback QR/link point at the upstream MirrorDrive author's form; hidden in CarMirror.
+        const val SHOW_FEEDBACK = false
         const val FEEDBACK_URL = "https://forms.gle/iwziaX1fZ5CToPyD7"
         const val QR_CARD = 0xFFEAEEF0.toInt()   // light card so the QR stays scannable
 

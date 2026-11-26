@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.mirrordrive.car"
         minSdk = 29
         targetSdk = 32
-        versionCode = 13
-        versionName = "0.92-car3"
+        versionCode = 14
+        versionName = "0.92-car4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
