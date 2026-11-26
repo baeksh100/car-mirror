@@ -62,7 +62,7 @@ class HidMouse(
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
             when (state) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    connected = device; log("✓ 연결됨: ${name(device)}")
+                    connected = device; tracker.invalidate(); log("✓ 연결됨: ${name(device)}")
                     MousePrefs.setLastHost(ctx, device.address)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -267,8 +267,9 @@ class HidMouse(
     }
 
     /** Relative move from a finger drag (already in mouse counts), optionally with a button held. */
-    fun move(dx: Int, dy: Int, buttons: Int = 0) {
+    fun move(dx: Int, dy: Int, buttons: Int = 0, tracked: Boolean = false) {
         if (dx == 0 && dy == 0) return
+        if (!tracked) tracker.invalidate()
         MouseReports.splitMove(dx, dy).forEach { (x, y) -> enqueue(buttons, x, y) }
     }
 
@@ -293,15 +294,26 @@ class HidMouse(
      * Pin the pointer into the top-left corner, then move to the fraction (fx, fy) of the screen,
      * where [fullX]/[fullY] are the calibrated counts for one full screen width/height.
      */
-    fun goToFraction(fx: Float, fy: Float, fullX: Int, fullY: Int) {
-        val homeCount = ((maxOf(fullX, fullY) * 1.5f) / 127f).toInt().coerceIn(8, 40) + 4
-        path(
-            MouseReports.homeMoves(homeCount) +
-                MouseReports.splitMove((fx * fullX).toInt(), (fy * fullY).toInt(), CALIB_STEP),
-        )
+    fun goToFraction(fx: Float, fy: Float, fullX: Int, fullY: Int, forceHome: Boolean = false) {
+        if (forceHome) tracker.invalidate()
+        val plan = tracker.plan((fx * fullX).toInt(), (fy * fullY).toInt(), fullX, fullY, SystemClock.uptimeMillis())
+        if (plan.home) {
+            // Overshooting into the corner is harmless, so these go out fast.
+            val homeCount = ((maxOf(fullX, fullY) * 1.5f) / 127f).toInt().coerceIn(8, 40) + 4
+            path(MouseReports.homeMoves(homeCount), gapMs = 4)
+        }
+        path(MouseReports.splitMove(plan.dx, plan.dy, CALIB_STEP))
     }
 
+    /** A tracked drag ended with the pointer at the fraction (fx, fy). */
+    fun draggedTo(fx: Float, fy: Float, fullX: Int, fullY: Int) =
+        tracker.movedTo((fx * fullX).toInt(), (fy * fullY).toInt())
+
+    /** Where the pointer is believed to be, tracked by [goToFraction]. */
+    private val tracker = PointerTracker()
+
     fun clearQueue() {
+        tracker.invalidate()
         sender.removeCallbacksAndMessages(QUEUE)
         synchronized(queueLock) { nextAt = 0L }
     }

@@ -105,7 +105,7 @@ class MouseTestActivity : AppCompatActivity() {
         col.addView(button("다른 방법: 아이폰에서 찾게 하기 (2분)") { makeDiscoverable() })
         col.addView(row(
             button("클릭") { mouse.click() },
-            button("왼쪽 위 구석으로") { mouse.path(MouseReports.homeMoves()) },
+            button("왼쪽 위 구석으로") { mouse.clearQueue(); mouse.path(MouseReports.homeMoves()) },
         ))
         col.addView(row(
             button("감도 −") { sensitivity = (sensitivity - 0.25f).coerceAtLeast(0.25f); refresh() },
@@ -239,7 +239,7 @@ class MouseTestActivity : AppCompatActivity() {
     private fun goTo(fx: Float, fy: Float, click: Boolean) {
         if (mouse.connected == null) { log("먼저 아이폰과 연결하세요"); return }
         mouse.clearQueue()
-        mouse.goToFraction(fx, fy, fullX, fullY)
+        mouse.goToFraction(fx, fy, fullX, fullY, forceHome = true)
         if (click) mouse.click()
     }
 

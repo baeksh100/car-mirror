@@ -104,3 +104,39 @@ class MotionAccumulator(var sensitivity: Float = 1f) {
 
     fun reset() { rx = 0f; ry = 0f }
 }
+
+/**
+ * Remembers where the iPhone pointer should be (in mouse counts from the top-left corner), so a
+ * touch only needs a short relative move instead of flying in from the corner every time. It
+ * re-pins to the corner now and then to wipe out accumulated drift.
+ */
+class PointerTracker(
+    private val rehomeEvery: Int = 15,
+    private val maxAgeMs: Long = 120_000,
+) {
+    data class Plan(val home: Boolean, val dx: Int, val dy: Int)
+
+    var x = 0; private set
+    var y = 0; private set
+    var valid = false; private set
+    private var moves = 0
+    private var homedAt = 0L
+    private var full: Pair<Int, Int>? = null
+
+    /** Plan the move to target counts ([tx], [ty]) for screen size [fullX]x[fullY] at [now]. */
+    fun plan(tx: Int, ty: Int, fullX: Int, fullY: Int, now: Long): Plan {
+        val home = !valid || moves >= rehomeEvery || now - homedAt > maxAgeMs || full != (fullX to fullY)
+        if (home) { x = 0; y = 0; moves = 0; homedAt = now; full = fullX to fullY }
+        val p = Plan(home, tx - x, ty - y)
+        x = tx; y = ty; valid = true; moves++
+        return p
+    }
+
+    /** The pointer was moved some other way (drag); trust it is now at ([tx], [ty]) but re-pin sooner. */
+    fun movedTo(tx: Int, ty: Int) {
+        if (!valid) return
+        x = tx; y = ty; moves += 3
+    }
+
+    fun invalidate() { valid = false }
+}
