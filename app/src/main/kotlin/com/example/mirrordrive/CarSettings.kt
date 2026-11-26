@@ -33,6 +33,15 @@ object CarSettings {
     }
 
     private const val KEY_NIGHT_DIM = "night_dim"
+
+    fun musicVisualizer(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_MUSIC_VIZ, true)
+
+    fun setMusicVisualizer(ctx: Context, on: Boolean) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_MUSIC_VIZ, on).apply()
+    }
+
+    private const val KEY_MUSIC_VIZ = "music_visualizer"
 }
 
 /**
