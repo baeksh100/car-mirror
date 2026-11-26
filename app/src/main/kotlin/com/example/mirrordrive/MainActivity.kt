@@ -137,6 +137,18 @@ class MainActivity : AppCompatActivity() {
                 marginEnd = dp(16) + dp(48) + dp(4)
             },
         )
+        // ⚙ settings, left of ✕: the waiting-screen long-press is hidden while mirroring.
+        root.addView(
+            buildSettingsButton(this) { showSettings() },
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END,
+            ).apply {
+                topMargin = dp(16)
+                marginEnd = dp(16) + 2 * (dp(48) + dp(4))
+            },
+        )
         setContentView(root)
 
         overlayController = OverlayController(this)
