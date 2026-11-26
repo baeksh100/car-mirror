@@ -10,8 +10,8 @@ android {
         applicationId = "app.carmirror"
         minSdk = 29
         targetSdk = 32
-        versionCode = 16
-        versionName = "0.92-car6"
+        versionCode = 17
+        versionName = "0.92-car7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {

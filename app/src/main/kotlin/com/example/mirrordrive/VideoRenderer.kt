@@ -100,7 +100,17 @@ class VideoRenderer(
             // Only feed access units that carry a coded slice (VCL NAL types 1-5). Parameter
             // sets are already supplied via csd; queuing standalone SPS/PPS/SEI buffers makes
             // some hardware decoders (e.g. c2.qti.avc.decoder) fault.
-            if (hasVcl(data)) {
+            // Single pass: detect slices AND keep the latest SPS/PPS, so a decoder recovery (or a
+            // rotation, which changes resolution) reconfigures with current parameter sets.
+            var vcl = false
+            for (nal in splitAnnexB(data)) {
+                when (nalType(nal)) {
+                    7 -> sps = nal
+                    8 -> pps = nal
+                    in 1..5 -> vcl = true
+                }
+            }
+            if (vcl) {
                 pending.add(Au(data, ptsUs))
                 drain()
             }
@@ -162,6 +172,7 @@ class VideoRenderer(
             override fun onError(mc: MediaCodec, e: MediaCodec.CodecException) {
                 lastError = "code=${e.errorCode}"
                 Log.e("CarMirror", "MediaCodec error code=${e.errorCode} diag=${e.diagnosticInfo}", e)
+                recoverFromError()
             }
         }, handler)
         c.configure(fmt, s, null, 0)
@@ -171,6 +182,58 @@ class VideoRenderer(
         configured = true
         Log.i("CarMirror", "codec configured name=${c.name} sps=${sps.size} pps=${pps.size}")
         return true
+    }
+
+    /**
+     * Native session events (see native_bridge.cpp notify_event). On a stream teardown the decoder
+     * is dropped and the parameter sets forgotten, so the next session — possibly a different
+     * resolution — configures from its own SPS/PPS instead of inheriting a stale/errored codec.
+     */
+    fun onStreamEvent(code: Int, detail: String?) {
+        Session.onEvent(code, detail)
+        if (code == Session.EV_VIDEO_RESET || code == Session.EV_STOPPED || code == Session.EV_CONN_RESET) {
+            resetDecoder(keepCsd = false)
+        }
+    }
+
+    /** Drop the codec but keep the Surface (and optionally the SPS/PPS) so it can be rebuilt. */
+    private fun resetDecoder(keepCsd: Boolean) {
+        synchronized(lock) {
+            if (released) return
+            try { codec?.stop() } catch (_: Exception) {}
+            try { codec?.release() } catch (_: Exception) {}
+            codec = null
+            codecThread?.quitSafely()
+            codecThread = null
+            configured = false
+            pending.clear()
+            freeInputs.clear()
+            if (!keepCsd) { sps = null; pps = null }
+        }
+    }
+
+    @Volatile private var lastRecoveryMs = 0L
+
+    /**
+     * A MediaCodec error used to leave the screen frozen until the app was restarted. Rebuild the
+     * decoder with the cached SPS/PPS instead (off the codec's own callback thread — releasing a
+     * codec from inside its callback can deadlock). Rate-limited so a persistently failing decoder
+     * doesn't spin.
+     */
+    private fun recoverFromError() {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastRecoveryMs < 2000) return
+        lastRecoveryMs = now
+        Thread {
+            resetDecoder(keepCsd = true)
+            synchronized(lock) {
+                val s = sps; val p = pps
+                if (!released && s != null && p != null) {
+                    runCatching { configure(s, p) }.onFailure { Log.e("CarMirror", "decoder recovery failed", it) }
+                }
+            }
+            Session.decoderRecoveries++
+        }.start()
     }
 
     fun flush() {
@@ -215,14 +278,6 @@ private fun decodedVideoSize(f: MediaFormat): Pair<Int, Int> {
         if (w > 0 && h > 0) return w to h
     }
     return f.getInteger(MediaFormat.KEY_WIDTH) to f.getInteger(MediaFormat.KEY_HEIGHT)
-}
-
-/** True if the Annex-B buffer contains at least one VCL slice NAL (types 1-5). */
-private fun hasVcl(data: ByteArray): Boolean {
-    for (nal in splitAnnexB(data)) {
-        if (nalType(nal) in 1..5) return true
-    }
-    return false
 }
 
 /** NAL unit type (low 5 bits of the header byte) for an Annex-B NAL that still carries

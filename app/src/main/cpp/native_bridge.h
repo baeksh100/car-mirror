@@ -19,6 +19,7 @@ extern JavaVM *g_vm;
 struct VideoSink {
     jobject obj = nullptr;      // global ref to the VideoRenderer
     jmethodID onAu = nullptr;   // void onAccessUnit(byte[] data, long ptsUs, boolean isConfig)
+    jmethodID onEvent = nullptr; // void onStreamEvent(int code, String detail) — CarMirror session events
 };
 extern VideoSink g_video;
 

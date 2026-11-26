@@ -97,6 +97,18 @@ class MainActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
             ),
         )
+        // Night auto-dim: a black layer over the video and waiting screen (below the buttons).
+        // The box's own backlight setting may not reach the car screen (it is a video feed into
+        // the head unit), so dimming the pixels themselves is the reliable way.
+        dimView = android.view.View(this).apply {
+            setBackgroundColor(Color.BLACK)
+            alpha = 0f
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        root.addView(dimView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         // "창 모드" (window mode) toggle -> floating overlay window (Feature 2).
         root.addView(
             buildModeButton(this) { requestOverlay() },
@@ -294,10 +306,18 @@ class MainActivity : AppCompatActivity() {
         }
         ui.removeCallbacks(waitingTick)
         ui.post(waitingTick)
+        runCatching {
+            sensorManager()?.let { sm ->
+                sm.getDefaultSensor(android.hardware.Sensor.TYPE_LIGHT)?.let {
+                    sm.registerListener(lightListener, it, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+                }
+            }
+        }
     }
 
     override fun onPause() {
         ui.removeCallbacks(waitingTick)
+        runCatching { sensorManager()?.unregisterListener(lightListener) }
         super.onPause()
     }
 
@@ -316,11 +336,15 @@ class MainActivity : AppCompatActivity() {
         }
         waitingOverlay.refreshDeviceInfoIfNeeded()
         runCatching {
+            val snap = Session.snapshot()
+            val ifs = interfaceDump()
             waitingOverlay.setGuidance(
-                guidanceFor(DiscoveryService.status, interfaceDump(),
-                    CarSettings.receiverName(this), NativeBridge.available),
+                guidanceFor(DiscoveryService.status, ifs,
+                    CarSettings.receiverName(this), NativeBridge.available, snap),
             )
+            waitingOverlay.setChecklist(checklistFor(DiscoveryService.status, ifs, snap))
         }
+        updateNightDim()
         // On-screen diagnostic (test builds): if fullscreen ever gets stuck on the waiting screen,
         // this line names why — decoder configured/released/error, whether the fullscreen Surface is
         // valid, the last setSurface outcome, and how long since the last rendered frame.
@@ -328,8 +352,28 @@ class MainActivity : AppCompatActivity() {
             val age = if (lastFrameMs == 0L) "-" else "${SystemClock.uptimeMillis() - lastFrameMs}ms"
             val fsSurf = if (::surfaceView.isInitialized && surfaceView.holder.surface?.isValid == true) 1 else 0
             val codec = if (::videoRenderer.isInitialized) videoRenderer.debugLine() else "-"
-            waitingOverlay.setDebug("car6 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
+            waitingOverlay.setDebug("car7 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode} rec=${Session.decoderRecoveries}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
         }
+    }
+
+    // ---- Night auto-dim ----------------------------------------------------------------------
+    private lateinit var dimView: android.view.View
+    private var night = false
+    @Volatile private var lastLux: Float? = null
+    private val lightListener = object : android.hardware.SensorEventListener {
+        override fun onSensorChanged(e: android.hardware.SensorEvent) { lastLux = e.values.firstOrNull() }
+        override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+    }
+
+    private fun sensorManager() = getSystemService(SENSOR_SERVICE) as? android.hardware.SensorManager
+
+    private fun updateNightDim() {
+        if (!::dimView.isInitialized) return
+        val now = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Seoul"))
+        night = CarSettings.nightDim(this) &&
+            isNight(now.monthValue, now.hour * 60 + now.minute, lastLux, night)
+        val target = if (night) NIGHT_DIM_ALPHA else 0f
+        if (dimView.alpha != target) dimView.animate().alpha(target).setDuration(1500).start()
     }
 
     /** Receiver name + auto-start, opened by long-pressing the CARMIRROR wordmark. */
@@ -352,6 +396,11 @@ class MainActivity : AppCompatActivity() {
         box.addView(android.widget.TextView(this).apply { text = "아이폰 화면 미러링 목록에 보일 이름" })
         box.addView(nameEdit)
         box.addView(auto)
+        val dim = android.widget.CheckBox(this).apply {
+            text = "밤에 화면 자동으로 어둡게"
+            isChecked = CarSettings.nightDim(this@MainActivity)
+        }
+        box.addView(dim)
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("CarMirror 설정")
             .setView(box)
@@ -359,6 +408,8 @@ class MainActivity : AppCompatActivity() {
                 val old = CarSettings.receiverName(this)
                 CarSettings.setReceiverName(this, nameEdit.text.toString())
                 CarSettings.setAutoStart(this, auto.isChecked)
+                CarSettings.setNightDim(this, dim.isChecked)
+                updateNightDim()
                 if (CarSettings.receiverName(this) != old) {
                     runCatching {
                         startService(Intent(this, ReceiverService::class.java).setAction(ReceiverService.ACTION_RENAME))

@@ -34,6 +34,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
     private val ripple = PulseIcon(context)
     private val deviceLine: TextView
     private val guideText: TextView
+    private val checklistText: TextView
     /** Opened by long-pressing the wordmark. */
     var onSettings: (() -> Unit)? = null
     private val debugText: TextView
@@ -82,6 +83,19 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         center.addView(
             guideText,
             LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(10) },
+        )
+        // Troubleshooting checklist, shown only after ~30 s without a stream (see checklistFor).
+        checklistText = TextView(context).apply {
+            setTextColor(Palette.SILVER)
+            typeface = Typeface.SANS_SERIF
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setLineSpacing(0f, 1.25f)
+            gravity = Gravity.START
+            visibility = GONE
+        }
+        center.addView(
+            checklistText,
+            LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(8) },
         )
         // Car-context caveat: the iPhone cannot run wireless CarPlay and screen mirroring at the
         // same time (an iOS restriction, not ours). On a CarPlay box that's the #1 reason the phone
@@ -162,6 +176,13 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
 
     /** Update the on-screen diagnostic line (test builds). No-op-safe to call every tick. */
     fun setDebug(text: String) { debugText.text = text }
+
+    /** Troubleshooting lines (see [checklistFor]); empty hides the block. */
+    fun setChecklist(lines: List<String>) {
+        val t = lines.joinToString("\n")
+        if (checklistText.text != t) checklistText.text = t
+        checklistText.visibility = if (lines.isEmpty()) GONE else VISIBLE
+    }
 
     /** Plain-language status for the driver (see [guidanceFor]). */
     fun setGuidance(g: Guidance) {

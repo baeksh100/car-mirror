@@ -24,6 +24,15 @@ object CarSettings {
     fun setAutoStart(ctx: Context, on: Boolean) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_AUTOSTART, on).apply()
     }
+
+    fun nightDim(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_NIGHT_DIM, true)
+
+    fun setNightDim(ctx: Context, on: Boolean) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_NIGHT_DIM, on).apply()
+    }
+
+    private const val KEY_NIGHT_DIM = "night_dim"
 }
 
 /**

@@ -25,7 +25,7 @@ object NativeBridge {
     }
 
     external fun nativeVersion(): String
-    external fun nativeInit(filesDir: String): Boolean
+    external fun nativeInit(filesDir: String, width: Int, height: Int): Boolean
     external fun nativeGetPublicKeyHex(): String
     external fun nativeGetDeviceId(): String
     external fun nativeGetPort(): Int

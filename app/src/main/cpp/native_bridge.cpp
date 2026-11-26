@@ -28,6 +28,8 @@ Java_com_example_mirrordrive_NativeBridge_setVideoSink(JNIEnv *env, jobject, job
     jclass cls = env->GetObjectClass(sink);
     // void onAccessUnit(byte[] data, long ptsUs, boolean isConfig)
     g_video.onAu = env->GetMethodID(cls, "onAccessUnit", "([BJZ)V");
+    g_video.onEvent = env->GetMethodID(cls, "onStreamEvent", "(ILjava/lang/String;)V");
+    if (!g_video.onEvent) { env->ExceptionClear(); LOGE("setVideoSink: onStreamEvent not found"); }
     if (!g_video.onAu) LOGE("setVideoSink: onAccessUnit method not found");
     else LOGI("setVideoSink: video sink registered");
 }
@@ -59,9 +61,28 @@ Java_com_example_mirrordrive_NativeBridge_nativeVersion(JNIEnv *env, jobject /*t
 // ALL raop_callbacks_s fields must be non-NULL — UxPlay calls them without NULL checks,
 // so any unset pointer crashes (SIGSEGV, PC=0) during connection setup. Real A/V wiring
 // (video_process/audio_process/audio_get_format) lands in Task 3/4; the rest are stubs.
+// CarMirror: session lifecycle -> Kotlin (VideoRenderer.onStreamEvent). Codes:
+//   1 = mirror video started, 2 = mirror video stopped, 3 = video reset (stream torn down),
+//   4 = connection reset (stream lost / timed out), 5 = client hello (detail = iPhone name).
+// Called on UxPlay's own threads, so attach to the JVM like the A/V callbacks do.
+static void notify_event(int code, const char *detail) {
+    if (!g_vm || !g_video.obj || !g_video.onEvent) return;
+    JNIEnv *env = nullptr;
+    bool attached = false;
+    if (g_vm->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
+        if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+        attached = true;
+    }
+    jstring js = detail ? env->NewStringUTF(detail) : nullptr;
+    env->CallVoidMethod(g_video.obj, g_video.onEvent, (jint)code, js);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (js) env->DeleteLocalRef(js);
+    if (attached) g_vm->DetachCurrentThread();
+}
+
 static void cb_conn_init(void*) {}
 static void cb_conn_destroy(void*) {}
-static void cb_conn_reset(void*, int) {}
+static void cb_conn_reset(void*, int reason) { LOGI("conn_reset reason=%d", reason); notify_event(4, nullptr); }
 static void cb_conn_teardown(void*, bool*, bool*) {}
 static void cb_conn_feedback(void*) {}
 // Real video bridge: hand each decoded Annex-B access unit to the Kotlin VideoRenderer.
@@ -134,7 +155,7 @@ static void cb_video_pause(void*) {}
 static void cb_video_resume(void*) {}
 static void cb_video_flush(void*) {}
 static void cb_audio_flush(void*) {}
-static void cb_video_reset(void*, reset_type_t) {}
+static void cb_video_reset(void*, reset_type_t t) { LOGI("video_reset type=%d", (int)t); notify_event(3, nullptr); }
 static double cb_audio_set_client_volume(void*) { return 0.0; }
 static void cb_audio_set_volume(void*, float) {}
 static void cb_audio_set_metadata(void*, const void*, int) {}
@@ -144,8 +165,12 @@ static void cb_audio_remote_control_id(void*, const char*, const char*) {}
 static void cb_audio_set_progress(void*, uint32_t*, uint32_t*, uint32_t*) {}
 static void cb_audio_get_format(void*, unsigned char*, unsigned short*, bool*, bool*, uint64_t*) {}
 static void cb_video_report_size(void*, float*, float*, float*, float*) {}
-static void cb_mirror_video_running(void*, bool) {}
-static void cb_report_client_request(void*, char*, char*, char*, bool *admit) { if (admit) *admit = true; }
+static void cb_mirror_video_running(void*, bool running) { notify_event(running ? 1 : 2, nullptr); }
+static void cb_report_client_request(void*, char*, char *model, char *name, bool *admit) {
+    if (admit) *admit = true;
+    LOGI("client: name=%s model=%s", name ? name : "?", model ? model : "?");
+    notify_event(5, name ? name : model);
+}
 static void cb_display_pin(void*, char*) {}
 static void cb_register_client(void*, const char*, const char*, const char*) {}
 static bool cb_check_register(void*, const char*) { return false; }
@@ -160,7 +185,8 @@ static void cb_on_video_acquire_playback_info(void*, playback_info_t*) {}
 static float cb_on_video_playlist_remove(void*) { return 0.0f; }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_mirrordrive_NativeBridge_nativeInit(JNIEnv *env, jobject, jstring filesDir) {
+Java_com_example_mirrordrive_NativeBridge_nativeInit(JNIEnv *env, jobject, jstring filesDir,
+                                                     jint width, jint height) {
     const char *dir = env->GetStringUTFChars(filesDir, nullptr);
     std::string keyfile = std::string(dir) + "/airplay_ed25519.key";
     env->ReleaseStringUTFChars(filesDir, dir);
@@ -209,6 +235,13 @@ Java_com_example_mirrordrive_NativeBridge_nativeInit(JNIEnv *env, jobject, jstri
     if (!g_ctx.raop) { LOGE("raop_init returned NULL"); return JNI_FALSE; }
     raop_set_log_callback(g_ctx.raop, raop_log_cb, nullptr);
     raop_set_log_level(g_ctx.raop, 8 /*LOGGER_DEBUG_DATA*/);
+    // CarMirror: tell the iPhone the real (landscape) display size so it encodes to fit the car
+    // screen instead of a fixed 1920x1080 — sharper on wide displays and less Wi-Fi bandwidth.
+    if (width >= 320 && height >= 240) {
+        raop_set_plist(g_ctx.raop, "width", width);
+        raop_set_plist(g_ctx.raop, "height", height);
+        LOGI("advertised display %dx%d", (int)width, (int)height);
+    }
     LOGI("raop_init OK; keyfile=%s device_id=%s", keyfile.c_str(), g_ctx.device_id);
 
     int err = raop_init2(g_ctx.raop, 1 /*nohold*/, g_ctx.device_id, keyfile.c_str());

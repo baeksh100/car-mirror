@@ -19,7 +19,8 @@ class ReceiverService : Service() {
         // crash the whole process — log it and stop the service gracefully. The activity's native
         // gate already keeps the UI alive; this is the belt-and-braces path for the service.
         val ok = try {
-            NativeBridge.nativeInit(filesDir.absolutePath)
+            val (w, h) = displaySize()
+            NativeBridge.nativeInit(filesDir.absolutePath, w, h)
         } catch (t: Throwable) {
             Log.e(TAG, "nativeInit threw", t)
             false
@@ -50,6 +51,15 @@ class ReceiverService : Service() {
         runCatching { wifiLock?.let { if (it.isHeld) it.release() } }
         super.onDestroy()
     }
+
+    /** Advertised display size from the real screen (0x0 = let the engine keep 1920x1080). */
+    @Suppress("DEPRECATION")
+    private fun displaySize(): Pair<Int, Int> = runCatching {
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        val d = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        val m = android.util.DisplayMetrics().also { d.getRealMetrics(it) }
+        advertisedSize(m.widthPixels, m.heightPixels) ?: (0 to 0)
+    }.getOrDefault(0 to 0).also { Log.i(TAG, "advertise display ${it.first}x${it.second}") }
 
     // Wi-Fi power-save adds tens of ms of jitter per packet on many chipsets; mirroring is a
     // constant real-time stream, so hold a low-latency lock while the receiver is running.
