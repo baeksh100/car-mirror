@@ -52,7 +52,7 @@ class MirrorTouch(
                 downX = e.x; downY = e.y; lastX = e.x; lastY = e.y
                 downAt = SystemClock.uptimeMillis(); dragging = false
                 accX.reset()
-                m.clearQueue()
+                // No clearQueue: a still-running move must finish so the tracked position holds.
                 m.goToFraction((e.x / w).coerceIn(0f, 1f), (e.y / h).coerceIn(0f, 1f), fullX, fullY)
             }
             MotionEvent.ACTION_MOVE -> {
@@ -65,12 +65,14 @@ class MirrorTouch(
                     accX.sensitivity = 1f
                     val (dx, dy) = accX.add((e.x - lastX) * fullX / w, (e.y - lastY) * fullY / h)
                     lastX = e.x; lastY = e.y
-                    m.move(dx, dy, MouseReports.BUTTON_LEFT)
+                    m.move(dx, dy, MouseReports.BUTTON_LEFT, tracked = true)
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (dragging) m.release()
-                else m.click(holdMs = (SystemClock.uptimeMillis() - downAt).coerceIn(40, 1500))
+                if (dragging) {
+                    m.release()
+                    m.draggedTo((e.x / w).coerceIn(0f, 1f), (e.y / h).coerceIn(0f, 1f), fullX, fullY)
+                } else m.click(holdMs = (SystemClock.uptimeMillis() - downAt).coerceIn(40, 1500))
                 tracking = false
             }
             MotionEvent.ACTION_CANCEL -> {
