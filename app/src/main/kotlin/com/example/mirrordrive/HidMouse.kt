@@ -7,7 +7,10 @@ import android.bluetooth.BluetoothHidDevice
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -45,6 +48,7 @@ class HidMouse(
             registered = reg
             log(if (reg) "✓ 마우스 등록 성공" else "마우스 등록 해제됨")
             if (reg && pluggedDevice != null) log("이전에 연결했던 기기: ${name(pluggedDevice)}")
+            if (reg) runCatching { hid?.connectedDevices?.firstOrNull() }.getOrNull()?.let { connected = it; log("✓ 이미 연결됨: ${name(it)}") }
             onChange()
         }
 
@@ -115,6 +119,78 @@ class HidMouse(
         else log("마우스 등록 요청 보냄…")
     }
 
+    // ---- pairing from this side -------------------------------------------------------------
+    // The iPhone often hides an Android box from its AssistiveTouch device list (the box says it
+    // is a phone/tablet, not a mouse). Pairing *from the box* and then connecting the mouse
+    // profile avoids that list entirely.
+
+    /** Device we paired from here and should connect as soon as bonding finishes. */
+    @Volatile private var pendingConnect: String? = null
+    private var receiverOn = false
+    var onFound: ((BluetoothDevice) -> Unit)? = null
+
+    private val btReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            val d: BluetoothDevice = i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) ?: return
+            when (i.action) {
+                BluetoothDevice.ACTION_FOUND -> onFound?.invoke(d)
+                BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                    val st = i.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)
+                    when (st) {
+                        BluetoothDevice.BOND_BONDING -> log("페어링 중… ${name(d)} (양쪽 화면의 숫자가 같으면 '연결/페어링'을 누르세요)")
+                        BluetoothDevice.BOND_BONDED -> {
+                            log("✓ 페어링 완료: ${name(d)}")
+                            if (pendingConnect == d.address) { pendingConnect = null; sender.postDelayed({ connect(d) }, 800) }
+                        }
+                        BluetoothDevice.BOND_NONE -> if (pendingConnect == d.address) { pendingConnect = null; log("✗ 페어링 실패/취소: ${name(d)}") }
+                    }
+                }
+                BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> log("주변 기기 찾기 끝")
+            }
+        }
+    }
+
+    private fun ensureReceiver() {
+        if (receiverOn) return
+        val f = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_FOUND)
+            addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+        }
+        runCatching { ctx.registerReceiver(btReceiver, f); receiverOn = true }
+            .onFailure { log("✗ 블루투스 알림 등록 실패: ${it.message}") }
+    }
+
+    fun startScan(): Boolean {
+        ensureReceiver()
+        val a = adapter ?: return false
+        runCatching { if (a.isDiscovering) a.cancelDiscovery() }
+        val ok = runCatching { a.startDiscovery() }
+            .onFailure { log("✗ 주변 기기 찾기 오류: ${it.message}") }.getOrDefault(false)
+        log(if (ok) "주변 기기 찾는 중… (아이폰 설정 → 블루투스 화면을 켜 두세요)" else "✗ 주변 기기 찾기를 시작하지 못했어요 (위치/주변 기기 권한 확인)")
+        return ok
+    }
+
+    fun stopScan() { runCatching { adapter?.cancelDiscovery() } }
+
+    /** Pair (if needed) and then connect the mouse profile to [d]. */
+    fun pairAndConnect(d: BluetoothDevice) {
+        ensureReceiver()
+        stopScan()
+        if (!registered) { log("먼저 '마우스 등록 성공'이 떠야 해요. '1. 시작'을 눌러 보세요."); return }
+        val bonded = runCatching { d.bondState == BluetoothDevice.BOND_BONDED }.getOrDefault(false)
+        if (bonded) { connect(d); return }
+        pendingConnect = d.address
+        val ok = runCatching { d.createBond() }.onFailure { log("✗ 페어링 오류: ${it.message}") }.getOrDefault(false)
+        if (!ok) { pendingConnect = null; log("✗ 페어링 요청 실패: ${name(d)}") } else log("${name(d)}에 페어링 요청…")
+    }
+
+    /** Forget a pairing (an old phone-style pairing can block the mouse profile). */
+    fun unpair(d: BluetoothDevice) {
+        val ok = runCatching { d.javaClass.getMethod("removeBond").invoke(d) as? Boolean ?: false }.getOrDefault(false)
+        log(if (ok) "페어링 지움: ${name(d)}" else "✗ 페어링을 지우지 못했어요. 블루투스 설정에서 직접 지워 주세요.")
+    }
+
     fun bondedDevices(): List<BluetoothDevice> =
         runCatching { adapter?.bondedDevices?.toList().orEmpty() }.getOrDefault(emptyList())
 
@@ -161,6 +237,9 @@ class HidMouse(
 
     fun stop() {
         clearQueue()
+        stopScan()
+        if (receiverOn) runCatching { ctx.unregisterReceiver(btReceiver) }
+        receiverOn = false
         runCatching { hid?.let { h -> connected?.let { h.disconnect(it) }; h.unregisterApp() } }
         runCatching { hid?.let { adapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, it) } }
         hid = null; proxyReady = false; registered = false; connected = null; proxyRequested = false

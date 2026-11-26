@@ -65,7 +65,8 @@ class MouseTestActivity : AppCompatActivity() {
         get() = if (Build.VERSION.SDK_INT >= 31) arrayOf(
             android.Manifest.permission.BLUETOOTH_CONNECT,
             android.Manifest.permission.BLUETOOTH_ADVERTISE,
-        ) else emptyArray()
+            android.Manifest.permission.BLUETOOTH_SCAN,
+        ) else arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION)
 
     private fun hasPerms() = perms.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
@@ -75,7 +76,7 @@ class MouseTestActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(code: Int, p: Array<out String>, r: IntArray) {
         super.onRequestPermissionsResult(code, p, r)
-        if (hasPerms()) mouse.start() else log("✗ 블루투스 권한이 없어서 시험할 수 없어요")
+        if (hasPerms()) mouse.start() else { log("✗ 블루투스 권한을 다 받지 못했어요. 일부 기능이 안 될 수 있어요."); mouse.start() }
     }
 
     // ---- UI ----------------------------------------------------------------------------------
@@ -93,13 +94,15 @@ class MouseTestActivity : AppCompatActivity() {
         col.addView(text("블루투스 마우스 시험 (실험)", 20f, Palette.MIRROR))
         status = text("", 15f, Palette.SILVER).also { col.addView(it) }
         col.addView(text(
-            "아이폰 준비: 설정 → 손쉬운 사용 → 터치 → AssistiveTouch 켜기 → '기기' → " +
-                "'블루투스 기기'에서 CarMirror(이 기기 블루투스 이름)를 선택해 연결하세요.",
+            "아이폰 준비: 설정 → 손쉬운 사용 → 터치 → AssistiveTouch 켜기. " +
+                "그다음 아이폰 설정 → 블루투스 화면을 켜 둔 채로 아래 2번을 누르세요. " +
+                "전에 이 기기와 아이폰을 연결한 적이 있으면 양쪽에서 먼저 '이 기기 지우기'를 하세요.",
             13f, Palette.SILVER_DIM,
         ))
         col.addView(button("1. 시작 / 다시 시작") { if (hasPerms()) mouse.start() else requestPerms() })
-        col.addView(button("2. 아이폰이 찾을 수 있게 하기 (2분)") { makeDiscoverable() })
+        col.addView(button("2. 아이폰 찾아서 연결 (추천)") { scanAndPick() })
         col.addView(button("연결했던 기기에 다시 연결") { pickBonded() })
+        col.addView(button("다른 방법: 아이폰에서 찾게 하기 (2분)") { makeDiscoverable() })
         col.addView(row(
             button("클릭") { mouse.click() },
             button("왼쪽 위 구석으로") { mouse.path(MouseReports.homeMoves()) },
@@ -190,12 +193,40 @@ class MouseTestActivity : AppCompatActivity() {
         }.onFailure { log("✗ 검색 허용 화면을 열 수 없어요: ${it.message}") }
     }
 
+    /** Scan for nearby devices; the list fills in live and tapping one pairs + connects. */
+    private fun scanAndPick() {
+        val found = ArrayList<android.bluetooth.BluetoothDevice>()
+        val names = android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1)
+        mouse.onFound = { d ->
+            runOnUiThread {
+                if (found.none { it.address == d.address }) {
+                    found += d
+                    names.add(mouse.name(d))
+                }
+            }
+        }
+        if (!mouse.startScan()) return
+        AlertDialog.Builder(this)
+            .setTitle("아이폰을 고르세요 (찾는 중…)")
+            .setAdapter(names) { _, i -> mouse.pairAndConnect(found[i]) }
+            .setNegativeButton("취소") { _, _ -> mouse.stopScan() }
+            .setOnDismissListener { mouse.onFound = null }
+            .show()
+    }
+
     private fun pickBonded() {
         val list = mouse.bondedDevices()
         if (list.isEmpty()) { log("연결했던 기기가 없어요. 아이폰에서 먼저 연결하세요."); return }
         AlertDialog.Builder(this)
             .setTitle("어느 기기에 연결할까요?")
-            .setItems(list.map { mouse.name(it) }.toTypedArray()) { _, i -> mouse.connect(list[i]) }
+            .setItems(list.map { mouse.name(it) }.toTypedArray()) { _, i -> mouse.pairAndConnect(list[i]) }
+            .setNeutralButton("페어링 지우기…") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle("어느 기기의 페어링을 지울까요?")
+                    .setItems(list.map { mouse.name(it) }.toTypedArray()) { _, i -> mouse.unpair(list[i]) }
+                    .setNegativeButton("취소", null)
+                    .show()
+            }
             .setNegativeButton("취소", null)
             .show()
     }
