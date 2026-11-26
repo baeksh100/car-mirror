@@ -151,6 +151,10 @@ class MainActivity : AppCompatActivity() {
         )
         setContentView(root)
 
+        // Experimental: touch the mirrored picture to drive the iPhone via the Bluetooth mouse.
+        aspectView.setOnTouchListener(MirrorTouch(this) { videoW to videoH })
+        if (MousePrefs.mirrorTouch(this)) runCatching { MouseHub.get(this).start() }
+
         overlayController = OverlayController(this)
         videoRenderer = VideoRenderer(
             // Fired after each frame is released to the Surface; just stamp the time so the
@@ -459,6 +463,7 @@ class MainActivity : AppCompatActivity() {
             // Audio has no surface; tear it down only when genuinely leaving mirroring
             // (never on the overlay/window-mode transition, which keeps the activity alive).
             if (::audioRenderer.isInitialized) audioRenderer.stop()
+            runCatching { MouseHub.release() }
         }
         super.onDestroy()
     }

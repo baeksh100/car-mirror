@@ -33,7 +33,6 @@ class MouseTestActivity : AppCompatActivity() {
     private lateinit var calibText: TextView
     private lateinit var absMode: CheckBox
     private lateinit var pad: View
-    private val logLines = ArrayDeque<String>()
 
     private val prefs by lazy { getSharedPreferences("carmirror_mouse", Context.MODE_PRIVATE) }
     private var sensitivity: Float
@@ -42,16 +41,17 @@ class MouseTestActivity : AppCompatActivity() {
     // Mouse counts that carry the pointer from the left edge to the right edge (and top→bottom),
     // found with the calibration buttons. Depends on the iPhone's AssistiveTouch tracking speed.
     private var fullX: Int
-        get() = prefs.getInt("fullX", 400)
-        set(v) { prefs.edit().putInt("fullX", v.coerceIn(20, 5000)).apply() }
+        get() = MousePrefs.fullX(this)
+        set(v) = MousePrefs.setFullX(this, v)
     private var fullY: Int
-        get() = prefs.getInt("fullY", 800)
-        set(v) { prefs.edit().putInt("fullY", v.coerceIn(20, 5000)).apply() }
+        get() = MousePrefs.fullY(this)
+        set(v) = MousePrefs.setFullY(this, v)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        mouse = HidMouse(applicationContext, ::log) { runOnUiThread { refresh() } }
+        mouse = MouseHub.get(this)
+        MouseHub.listener = { runOnUiThread { refresh() } }
         setContentView(buildUi())
         log("기기: ${Build.MANUFACTURER} ${Build.MODEL}, 안드로이드 SDK ${Build.VERSION.SDK_INT}")
         log("블루투스 이름: ${runCatching { mouse.adapter?.name }.getOrNull() ?: "-"}")
@@ -136,6 +136,15 @@ class MouseTestActivity : AppCompatActivity() {
             setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("abs", on).apply(); if (::pad.isInitialized) pad.invalidate() }
         }
         col.addView(absMode)
+        col.addView(CheckBox(this).apply {
+            text = "미러링 화면을 눌러서 아이폰 조작하기 (위 칸 수를 먼저 맞추세요)"
+            setTextColor(Palette.MIRROR)
+            isChecked = MousePrefs.mirrorTouch(this@MouseTestActivity)
+            setOnCheckedChangeListener { _, on ->
+                MousePrefs.setMirrorTouch(this@MouseTestActivity, on)
+                log(if (on) "미러링 화면 터치 조작 켬 — 이 화면을 닫아도 연결이 유지돼요" else "미러링 화면 터치 조작 끔")
+            }
+        })
 
         logView = text("", 12f, Palette.SILVER_DIM).apply { setPadding(0, dp(10), 0, 0) }
         col.addView(logView)
@@ -173,16 +182,11 @@ class MouseTestActivity : AppCompatActivity() {
             else -> "○ 확인 중… (아래 기록을 보세요)"
         }
         status.setTextColor(if (dev != null) Palette.LIVE else Palette.SILVER)
+        logView.text = "기록\n" + MouseHub.logText()
         calibText.text = "가로 끝까지 ${fullX}칸 · 세로 끝까지 ${fullY}칸 · 감도 ${"%.2f".format(sensitivity)}"
     }
 
-    private fun log(s: String) {
-        runOnUiThread {
-            logLines.addFirst(s)
-            while (logLines.size > 14) logLines.removeLast()
-            if (::logView.isInitialized) logView.text = "기록\n" + logLines.joinToString("\n")
-        }
-    }
+    private fun log(s: String) = MouseHub.log(s)
 
     private fun makeDiscoverable() {
         runCatching {
@@ -235,13 +239,15 @@ class MouseTestActivity : AppCompatActivity() {
     private fun goTo(fx: Float, fy: Float, click: Boolean) {
         if (mouse.connected == null) { log("먼저 아이폰과 연결하세요"); return }
         mouse.clearQueue()
-        val steps = MouseReports.homeMoves() +
-            MouseReports.splitMove((fx * fullX).toInt(), (fy * fullY).toInt(), CALIB_STEP)
-        mouse.path(steps, then = if (click) ({ mouse.click() }) else null)
+        mouse.goToFraction(fx, fy, fullX, fullY)
+        if (click) mouse.click()
     }
 
     override fun onDestroy() {
-        mouse.stop()
+        MouseHub.listener = null
+        mouse.onFound = null
+        // Keep the iPhone connected for touch control on the mirror screen; otherwise let go.
+        if (!MousePrefs.mirrorTouch(this)) MouseHub.release()
         super.onDestroy()
     }
 
@@ -320,8 +326,4 @@ class MouseTestActivity : AppCompatActivity() {
         }
     }
 
-    companion object {
-        /** Small, even steps keep iOS pointer acceleration predictable for calibration. */
-        const val CALIB_STEP = 8
-    }
 }

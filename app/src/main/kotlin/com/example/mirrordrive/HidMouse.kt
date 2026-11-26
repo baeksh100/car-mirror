@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.Executors
 
@@ -49,12 +50,22 @@ class HidMouse(
             log(if (reg) "✓ 마우스 등록 성공" else "마우스 등록 해제됨")
             if (reg && pluggedDevice != null) log("이전에 연결했던 기기: ${name(pluggedDevice)}")
             if (reg) runCatching { hid?.connectedDevices?.firstOrNull() }.getOrNull()?.let { connected = it; log("✓ 이미 연결됨: ${name(it)}") }
+            // Reconnect the last iPhone on its own, so touch control works right after start-up.
+            if (reg && connected == null) {
+                val addr = pluggedDevice?.address ?: MousePrefs.lastHost(ctx)
+                if (addr != null) runCatching { adapter?.getRemoteDevice(addr) }.getOrNull()?.let { d ->
+                    sender.postDelayed({ if (connected == null) connect(d) }, 500)
+                }
+            }
             onChange()
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
             when (state) {
-                BluetoothProfile.STATE_CONNECTED -> { connected = device; log("✓ 연결됨: ${name(device)}") }
+                BluetoothProfile.STATE_CONNECTED -> {
+                    connected = device; log("✓ 연결됨: ${name(device)}")
+                    MousePrefs.setLastHost(ctx, device.address)
+                }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     if (connected?.address == device.address) connected = null
                     log("연결 끊김: ${name(device)}")
@@ -203,6 +214,12 @@ class HidMouse(
     fun name(d: BluetoothDevice): String = runCatching { d.name }.getOrNull() ?: d.address
 
     // ---- input -----------------------------------------------------------------------------
+    // Every report goes through one paced queue so scripted paths (corner homing, moving to a
+    // spot) and live finger moves never overtake each other.
+
+    private val queueLock = Any()
+    private val QUEUE = Any()  // token: clearQueue drops only queued input, not reconnects
+    private var nextAt = 0L
 
     private fun sendNow(buttons: Int, dx: Int, dy: Int, wheel: Int = 0) {
         val d = connected ?: return
@@ -210,33 +227,64 @@ class HidMouse(
             .onFailure { Log.w(TAG, "sendReport", it) }
     }
 
-    /** Relative move from a finger drag (already in mouse counts). */
-    fun move(dx: Int, dy: Int, buttons: Int = 0) {
-        if (dx == 0 && dy == 0) return
-        sender.post { MouseReports.splitMove(dx, dy).forEach { (x, y) -> sendNow(buttons, x, y) } }
+    private fun enqueue(buttons: Int, dx: Int, dy: Int, wheel: Int = 0, gapMs: Long = 4) {
+        synchronized(queueLock) {
+            val at = maxOf(SystemClock.uptimeMillis(), nextAt)
+            sender.postAtTime({ sendNow(buttons, dx, dy, wheel) }, QUEUE, at)
+            nextAt = at + gapMs
+        }
     }
 
-    fun scroll(wheel: Int) { sender.post { sendNow(0, 0, 0, wheel) } }
+    private fun enqueueAction(delayAfterMs: Long, action: () -> Unit) {
+        synchronized(queueLock) {
+            val at = maxOf(SystemClock.uptimeMillis(), nextAt) + delayAfterMs
+            sender.postAtTime(action, QUEUE, at)
+            nextAt = at
+        }
+    }
 
-    fun click(button: Int = MouseReports.BUTTON_LEFT) {
-        sender.post { sendNow(button, 0, 0) }
-        sender.postDelayed({ sendNow(0, 0, 0) }, 40)
+    /** Relative move from a finger drag (already in mouse counts), optionally with a button held. */
+    fun move(dx: Int, dy: Int, buttons: Int = 0) {
+        if (dx == 0 && dy == 0) return
+        MouseReports.splitMove(dx, dy).forEach { (x, y) -> enqueue(buttons, x, y) }
+    }
+
+    fun scroll(wheel: Int) = enqueue(0, 0, 0, wheel)
+
+    /** Press and release; [holdMs] longer than ~500ms acts as a long press on the iPhone. */
+    fun click(button: Int = MouseReports.BUTTON_LEFT, holdMs: Long = 40) {
+        enqueue(button, 0, 0, gapMs = holdMs.coerceIn(20, 2000))
+        enqueue(0, 0, 0)
+    }
+
+    fun press(button: Int = MouseReports.BUTTON_LEFT) = enqueue(button, 0, 0, gapMs = 30)
+    fun release() = enqueue(0, 0, 0, gapMs = 20)
+
+    /** Queue a scripted path, each step [gapMs] apart (pacing matters more than speed here). */
+    fun path(steps: List<Pair<Int, Int>>, gapMs: Long = 8, then: (() -> Unit)? = null) {
+        steps.forEach { (x, y) -> enqueue(0, x, y, gapMs = gapMs) }
+        if (then != null) enqueueAction(30, then)
     }
 
     /**
-     * Queue a scripted path: each step is sent [gapMs] apart. Used by the corner-home and
-     * calibration tests, where pacing matters more than speed.
+     * Pin the pointer into the top-left corner, then move to the fraction (fx, fy) of the screen,
+     * where [fullX]/[fullY] are the calibrated counts for one full screen width/height.
      */
-    fun path(steps: List<Pair<Int, Int>>, gapMs: Long = 8, then: (() -> Unit)? = null) {
-        var t = 0L
-        steps.forEach { (x, y) -> sender.postDelayed({ sendNow(0, x, y) }, t); t += gapMs }
-        if (then != null) sender.postDelayed(then, t + 30)
+    fun goToFraction(fx: Float, fy: Float, fullX: Int, fullY: Int) {
+        val homeCount = ((maxOf(fullX, fullY) * 1.5f) / 127f).toInt().coerceIn(8, 40) + 4
+        path(
+            MouseReports.homeMoves(homeCount) +
+                MouseReports.splitMove((fx * fullX).toInt(), (fy * fullY).toInt(), CALIB_STEP),
+        )
     }
 
-    fun clearQueue() = sender.removeCallbacksAndMessages(null)
+    fun clearQueue() {
+        sender.removeCallbacksAndMessages(QUEUE)
+        synchronized(queueLock) { nextAt = 0L }
+    }
 
     fun stop() {
-        clearQueue()
+        sender.removeCallbacksAndMessages(null)
         stopScan()
         if (receiverOn) runCatching { ctx.unregisterReceiver(btReceiver) }
         receiverOn = false
@@ -247,5 +295,52 @@ class HidMouse(
         callbackExec.shutdown()
     }
 
-    companion object { private const val TAG = "HidMouse" }
+    companion object {
+        private const val TAG = "HidMouse"
+        /** Small, even steps keep iOS pointer acceleration predictable for calibration. */
+        const val CALIB_STEP = 8
+    }
+}
+
+/**
+ * One shared mouse for the whole app: the test screen and the mirror screen use the same
+ * registration, so the iPhone stays connected when you leave the test screen.
+ */
+object MouseHub {
+    @Volatile private var inst: HidMouse? = null
+    private val lines = ArrayDeque<String>()
+    /** The screen currently showing mouse status (test screen); called on any change. */
+    @Volatile var listener: (() -> Unit)? = null
+
+    fun get(ctx: Context): HidMouse = inst ?: synchronized(this) {
+        inst ?: HidMouse(ctx.applicationContext, ::log) { listener?.invoke() }.also { inst = it }
+    }
+
+    fun peek(): HidMouse? = inst
+
+    fun release() = synchronized(this) { inst?.stop(); inst = null }
+
+    fun log(s: String) {
+        synchronized(lines) { lines.addFirst(s); while (lines.size > 14) lines.removeLast() }
+        listener?.invoke()
+    }
+
+    fun logText(): String = synchronized(lines) { lines.joinToString("\n") }
+}
+
+/** Mouse settings (separate prefs file from [CarSettings]). */
+object MousePrefs {
+    private fun p(ctx: Context) = ctx.getSharedPreferences("carmirror_mouse", Context.MODE_PRIVATE)
+
+    fun fullX(ctx: Context) = p(ctx).getInt("fullX", 400)
+    fun setFullX(ctx: Context, v: Int) = p(ctx).edit().putInt("fullX", v.coerceIn(20, 5000)).apply()
+    fun fullY(ctx: Context) = p(ctx).getInt("fullY", 800)
+    fun setFullY(ctx: Context, v: Int) = p(ctx).edit().putInt("fullY", v.coerceIn(20, 5000)).apply()
+
+    /** Touching the mirrored iPhone screen drives the iPhone through the mouse. */
+    fun mirrorTouch(ctx: Context) = p(ctx).getBoolean("mirror_touch", false)
+    fun setMirrorTouch(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("mirror_touch", on).apply()
+
+    fun lastHost(ctx: Context): String? = p(ctx).getString("last_host", null)
+    fun setLastHost(ctx: Context, addr: String) = p(ctx).edit().putString("last_host", addr).apply()
 }
