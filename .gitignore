@@ -12,6 +12,8 @@ app/src/main/cpp/uxplay/
 # Signing secrets — NEVER commit these.
 *.jks
 *.keystore
+# Shared test-build key (deliberately public: lets every build update the last one).
+!app/signing/carmirror-shared.keystore
 keystore.properties
 
 # Built artifacts (APKs / bundles are build output, not source).
