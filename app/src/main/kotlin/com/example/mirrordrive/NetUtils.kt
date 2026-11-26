@@ -51,3 +51,21 @@ fun localIpv4(): InetAddress? = candidateIpv4s().firstOrNull()?.addr
 /** Every candidate as on-screen text, or null if none is up. */
 fun localIpv4String(): String? =
     candidateIpv4s().takeIf { it.isNotEmpty() }?.joinToString(" ") { it.addr.hostAddress ?: "?" }
+
+/**
+ * Diagnostic: every UP interface with its IPv4 addresses, INCLUDING ones we filter out, so a
+ * "no-network" screenshot tells us whether Wi-Fi is down or we are wrongly excluding a link.
+ * Format: name:ip[,ip][*] where * marks an interface excluded by our filters. "none" if no IPv4.
+ */
+fun interfaceDump(): String = runCatching {
+    NetworkInterface.getNetworkInterfaces().asSequence()
+        .filter { it.isUp && !it.isLoopback }
+        .map { nif ->
+            val v4 = nif.inetAddresses.asSequence().filterIsInstance<Inet4Address>()
+                .map { it.hostAddress }.toList()
+            val excluded = nif.isVirtual || EXCLUDED_IF_PREFIXES.any { nif.name.startsWith(it) }
+            nif.name + ":" + (if (v4.isEmpty()) "v6only" else v4.joinToString(",")) + (if (excluded) "*" else "")
+        }
+        .joinToString(" ")
+        .ifEmpty { "none" }
+}.getOrElse { "err:${it.javaClass.simpleName}" }
