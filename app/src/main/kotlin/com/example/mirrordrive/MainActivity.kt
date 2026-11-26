@@ -365,6 +365,11 @@ class MainActivity : AppCompatActivity() {
             waitingOverlay.setChecklist(checklistFor(DiscoveryService.status, ifs, snap))
         }
         updateNightDim()
+        // Touch control: (re)start the mouse if it isn't up yet (Bluetooth may come on late).
+        if (++mouseTick % 20 == 0 && MousePrefs.mirrorTouch(this)) runCatching {
+            val m = MouseHub.get(this)
+            if (!m.proxyRequested || (m.proxyReady && !m.registered)) m.start()
+        }
         // On-screen diagnostic (test builds): if fullscreen ever gets stuck on the waiting screen,
         // this line names why — decoder configured/released/error, whether the fullscreen Surface is
         // valid, the last setSurface outcome, and how long since the last rendered frame.
@@ -375,6 +380,8 @@ class MainActivity : AppCompatActivity() {
             waitingOverlay.setDebug("car7 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode} rec=${Session.decoderRecoveries}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
         }
     }
+
+    private var mouseTick = 0
 
     // ---- Night auto-dim ----------------------------------------------------------------------
     private lateinit var dimView: android.view.View

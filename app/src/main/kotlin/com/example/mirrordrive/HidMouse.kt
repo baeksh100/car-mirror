@@ -51,11 +51,10 @@ class HidMouse(
             if (reg && pluggedDevice != null) log("이전에 연결했던 기기: ${name(pluggedDevice)}")
             if (reg) runCatching { hid?.connectedDevices?.firstOrNull() }.getOrNull()?.let { connected = it; log("✓ 이미 연결됨: ${name(it)}") }
             // Reconnect the last iPhone on its own, so touch control works right after start-up.
-            if (reg && connected == null) {
-                val addr = pluggedDevice?.address ?: MousePrefs.lastHost(ctx)
-                if (addr != null) runCatching { adapter?.getRemoteDevice(addr) }.getOrNull()?.let { d ->
-                    sender.postDelayed({ if (connected == null) connect(d) }, 500)
-                }
+            if (reg) {
+                pluggedDevice?.address?.let { MousePrefs.setLastHost(ctx, it) }
+                sender.removeCallbacks(reconnectTick)
+                sender.postDelayed(reconnectTick, 500)
             }
             onChange()
         }
@@ -84,6 +83,25 @@ class HidMouse(
         }
     }
 
+    /**
+     * While registered but not connected, keep re-trying the remembered iPhone (every 20s): in
+     * the car the box often starts before the iPhone is in range or has Bluetooth on.
+     */
+    private var reconnectTries = 0
+    private var saidBtOff = false
+    private val reconnectTick: Runnable = object : Runnable {
+        override fun run() {
+            if (!registered) return
+            if (connected == null) {
+                val addr = MousePrefs.lastHost(ctx) ?: return
+                val d = runCatching { adapter?.getRemoteDevice(addr) }.getOrNull() ?: return
+                if (reconnectTries++ % 6 == 0) log("기억한 아이폰에 다시 연결 시도: ${name(d)}")
+                runCatching { hid?.connect(d) }
+            }
+            sender.postDelayed(this, 20_000)
+        }
+    }
+
     private val listener = object : BluetoothProfile.ServiceListener {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
             if (profile != BluetoothProfile.HID_DEVICE) return
@@ -105,7 +123,12 @@ class HidMouse(
     fun start() {
         val a = adapter
         if (a == null) { log("✗ 이 기기에 블루투스가 없어요"); return }
-        if (!a.isEnabled) { log("블루투스가 꺼져 있어요. 켜고 다시 시도하세요."); return }
+        if (!a.isEnabled) {
+            if (!saidBtOff) log("블루투스가 꺼져 있어요. 켜고 다시 시도하세요.")
+            saidBtOff = true
+            return
+        }
+        saidBtOff = false
         if (proxyRequested) { if (proxyReady && !registered) register(); return }
         val ok = runCatching { a.getProfileProxy(ctx, listener, BluetoothProfile.HID_DEVICE) }
             .onFailure { log("✗ 마우스 기능 요청 실패: ${it.javaClass.simpleName} ${it.message}") }
@@ -338,7 +361,8 @@ object MousePrefs {
     fun setFullY(ctx: Context, v: Int) = p(ctx).edit().putInt("fullY", v.coerceIn(20, 5000)).apply()
 
     /** Touching the mirrored iPhone screen drives the iPhone through the mouse. */
-    fun mirrorTouch(ctx: Context) = p(ctx).getBoolean("mirror_touch", false)
+    // Defaults to on once an iPhone has been connected from the test screen.
+    fun mirrorTouch(ctx: Context) = p(ctx).getBoolean("mirror_touch", lastHost(ctx) != null)
     fun setMirrorTouch(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("mirror_touch", on).apply()
 
     fun lastHost(ctx: Context): String? = p(ctx).getString("last_host", null)
