@@ -11,7 +11,7 @@ for pair in "aarch64-linux-android:arm64-v8a" "armv7a-linux-androideabi:armeabi-
   TGT="${pair%%:*}"; ABI="${pair##*:}"
   PREFIX="$ROOT/app/src/main/cpp/prebuilt/$ABI"
   make distclean 2>/dev/null || true
-  ./configure --host="$TARGET" --prefix="$PREFIX" \
+  ./configure --host="$TGT" --prefix="$PREFIX" --with-pic \
     --without-cython --disable-shared --enable-static \
     CC="$TOOLCHAIN/bin/clang --target=$TGT$API" \
     CXX="$TOOLCHAIN/bin/clang++ --target=$TGT$API" \

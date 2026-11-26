@@ -11,7 +11,7 @@ cd build/fdk-aac && ./autogen.sh
 # android_errorWriteLog(), pulling in the platform-internal <log/log.h> that the NDK
 # does not ship. Neutralize it for standalone NDK builds — it is a no-op diagnostic,
 # not part of AAC decoding. (Only this one file is affected.)
-sed -i '' -e '/#include "log\/log\.h"/d' \
+sed -i.bak -e '/#include "log\/log\.h"/d' \
           -e 's/android_errorWriteLog([^;]*);/(void)0;/g' \
           libSBRdec/src/lpp_tran.cpp
 
@@ -19,8 +19,8 @@ for pair in "aarch64-linux-android:arm64-v8a" "armv7a-linux-androideabi:armeabi-
   TGT="${pair%%:*}"; ABI="${pair##*:}"
   PREFIX="$ROOT/app/src/main/cpp/prebuilt/$ABI"
   make distclean 2>/dev/null || true
-  ./configure --host=aarch64-linux-android --prefix="$PREFIX" --disable-shared --enable-static \
-    CC="$TOOLCHAIN/bin/clang --target=$TGT$API" \
+  ./configure --host="$TGT" --prefix="$PREFIX" --disable-shared --enable-static --with-pic \
+    CC="$TOOLCHAIN/bin/clang --target=$TGT$API" CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" \
     CXX="$TOOLCHAIN/bin/clang++ --target=$TGT$API" \
     AR="$TOOLCHAIN/bin/llvm-ar" RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
   make -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)" && make install

@@ -4,23 +4,50 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 
+/** One usable local IPv4 address and the interface it lives on. */
+data class LocalAddr(val ifName: String, val addr: InetAddress) {
+    val text: String get() = "${addr.hostAddress}($ifName)"
+}
+
+// Cellular modems, VPN tunnels and dummy links can never be reached by the iPhone over Wi-Fi.
+private val EXCLUDED_IF_PREFIXES = listOf("rmnet", "ccmni", "tun", "dummy", "ppp", "ipsec", "clat", "v4-")
+
 /**
- * The device's own site-local IPv4, found by enumerating network interfaces rather than the
- * deprecated WifiInfo.ipAddress (which only reports the STA/client interface and returns 0 when
- * the device is acting as a SoftAP hotspot). This works in every network mode:
- *  - normal shared Wi-Fi,
- *  - joined to an iPhone Personal Hotspot (tablet gets e.g. 172.20.10.2),
- *  - acting as the SoftAP hotspot itself (e.g. 192.168.x on ap0/wlan1).
- * jmDNS must bind and advertise this exact address, so picking the wrong NIC would hand the
- * iPhone an unreachable IP.
+ * Lower = better. Car head units / cast boxes often expose several site-local IPv4 links at once
+ * (internal Ethernet to the head unit, USB tethering, Wi-Fi). The original code advertised only the
+ * FIRST one it found, so on such boxes the iPhone could be handed an unreachable address. We now
+ * rank them and advertise on every candidate, preferring the iPhone Personal Hotspot subnet.
  */
-fun localIpv4(): InetAddress? = runCatching {
+private fun rank(ifName: String, addr: InetAddress): Int {
+    val ip = addr.hostAddress ?: ""
+    return when {
+        ip.startsWith("172.20.10.") -> 0                       // iPhone Personal Hotspot subnet
+        ifName.startsWith("wlan") -> 1
+        ifName.startsWith("ap") || ifName.startsWith("swlan") || ifName.startsWith("softap") -> 2
+        ifName.startsWith("p2p") -> 4
+        ifName.startsWith("eth") || ifName.startsWith("usb") || ifName.startsWith("rndis") -> 5
+        else -> 3
+    }
+}
+
+/** All site-local IPv4 addresses the iPhone could plausibly reach, best first. */
+fun candidateIpv4s(): List<LocalAddr> = runCatching {
     NetworkInterface.getNetworkInterfaces().asSequence()
         .filter { it.isUp && !it.isLoopback && !it.isVirtual }
-        .flatMap { it.inetAddresses.asSequence() }
-        .filterIsInstance<Inet4Address>()
-        .firstOrNull { it.isSiteLocalAddress }
-}.getOrNull()
+        .filter { nif -> EXCLUDED_IF_PREFIXES.none { nif.name.startsWith(it) } }
+        .flatMap { nif ->
+            nif.inetAddresses.asSequence()
+                .filterIsInstance<Inet4Address>()
+                .filter { it.isSiteLocalAddress }
+                .map { LocalAddr(nif.name, it) }
+        }
+        .sortedBy { rank(it.ifName, it.addr) }
+        .toList()
+}.getOrDefault(emptyList())
 
-/** The same address as a dotted string for on-screen display, or null if none is up. */
-fun localIpv4String(): String? = localIpv4()?.hostAddress
+/** The best candidate (kept for callers that only need one address). */
+fun localIpv4(): InetAddress? = candidateIpv4s().firstOrNull()?.addr
+
+/** Every candidate as on-screen text, or null if none is up. */
+fun localIpv4String(): String? =
+    candidateIpv4s().takeIf { it.isNotEmpty() }?.joinToString(" ") { it.addr.hostAddress ?: "?" }

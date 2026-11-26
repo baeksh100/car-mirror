@@ -66,7 +66,7 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         )
         center.addView(
             TextView(context).apply {
-                text = "아이폰 제어센터 → 화면 미러링 → MirrorDrive"
+                text = "아이폰 제어센터 → 화면 미러링 → CarMirror"
                 setTextColor(Palette.SILVER_DIM)
                 typeface = Typeface.SANS_SERIF
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -198,8 +198,8 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         debugText = TextView(context).apply {
             setTextColor(Palette.SILVER_DIM)
             typeface = Typeface.MONOSPACE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
-            alpha = 0.55f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            alpha = 0.8f
             letterSpacing = 0.0f
             gravity = Gravity.CENTER
         }
@@ -234,14 +234,13 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
 
     /** Read device id / port / Wi-Fi IPv4 (safe before native init: shows "—"), until complete. */
     fun refreshDeviceInfoIfNeeded() {
-        if (deviceInfoComplete) return
+        // CarMirror: keep refreshing — the address changes when the hotspot connects later.
         val id = runCatching { NativeBridge.nativeGetDeviceId() }.getOrNull()?.takeIf { it.isNotBlank() }
         val port = runCatching { NativeBridge.nativeGetPort() }.getOrDefault(0)
         val ip = localIpv4String()
         val idText = id ?: "—"
         val addrText = if (ip != null && port > 0) "$ip:$port" else "—"
         deviceLine.text = "device $idText\n$addrText"
-        if (id != null && ip != null && port > 0) deviceInfoComplete = true
     }
 
     /** Fade the waiting screen out (first frame rendered). Idempotent. */

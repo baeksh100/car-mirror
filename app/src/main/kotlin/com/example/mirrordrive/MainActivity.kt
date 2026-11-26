@@ -321,7 +321,7 @@ class MainActivity : AppCompatActivity() {
             val age = if (lastFrameMs == 0L) "-" else "${SystemClock.uptimeMillis() - lastFrameMs}ms"
             val fsSurf = if (::surfaceView.isInitialized && surfaceView.holder.surface?.isValid == true) 1 else 0
             val codec = if (::videoRenderer.isInitialized) videoRenderer.debugLine() else "-"
-            waitingOverlay.setDebug("v0.7 ov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
+            waitingOverlay.setDebug("car1 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
         }
     }
 

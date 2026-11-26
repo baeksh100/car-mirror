@@ -37,4 +37,9 @@ object NativeBridge {
     // Registers the audio sink (an AudioRenderer) that native cb_audio_process delivers
     // compressed AAC-ELD access units to via onAudioFrame(byte[], long).
     external fun setAudioSink(sink: Any)
+
+    // CarMirror: fdk-aac software AAC-ELD decoder (fallback when MediaCodec can't do ELD).
+    external fun nativeAacInit(asc: ByteArray): Boolean
+    external fun nativeAacDecode(data: ByteArray): ShortArray?
+    external fun nativeAacRelease()
 }

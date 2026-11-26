@@ -31,7 +31,7 @@ class ReceiverService : Service() {
         }
         discovery = DiscoveryService(this).also {
             it.start(
-                name = "MirrorDrive",
+                name = "CarMirror",
                 port = NativeBridge.nativeGetPort(),
                 pkHex = NativeBridge.nativeGetPublicKeyHex(),
                 deviceId = NativeBridge.nativeGetDeviceId(),

@@ -34,6 +34,13 @@ import java.util.ArrayDeque
  * Pacing / lip-sync is intentionally NOT handled here (Task 5) — frames are played as they
  * arrive; the goal for this task is simply audible sound.
  */
+/** On-screen diagnostic: which audio decode path is active. */
+object AudioState { @Volatile var mode: String = "-" }
+
+private var mode: String
+    get() = AudioState.mode
+    set(v) { AudioState.mode = v }
+
 class AudioRenderer(
     // Reports decoded PCM byte counts as they are written to the track (test/telemetry hook).
     private val onPcm: (Int) -> Unit = {},
@@ -49,6 +56,12 @@ class AudioRenderer(
 
     @Volatile private var released = false
 
+    // CarMirror: software (fdk-aac) fallback state.
+    private var software = false
+    private var asc: ByteArray? = null
+    private var hwIn = 0
+    @Volatile private var hwOut = 0
+
     /**
      * Build the output track and decoder for 44100/stereo AAC-ELD described by [ascBytes]
      * (the AudioSpecificConfig). Safe to call once, before any frames arrive.
@@ -60,12 +73,13 @@ class AudioRenderer(
                 Log.e(TAG, "AudioRenderer: no AudioTrack; audio disabled")
                 return
             }
+            asc = ascBytes
             if (tryConfigureMediaCodec(ascBytes)) {
                 Log.i(TAG, "AudioRenderer: MediaCodec AAC-ELD path configured")
+                mode = "hw"
             } else {
-                // Device rejected the ELD profile. The fdk-aac fallback is unavailable until
-                // the prebuilt is rebuilt with -fPIC; audio stays silent on such a device.
-                Log.e(TAG, "AudioRenderer: MediaCodec rejected AAC-ELD; audio disabled")
+                Log.w(TAG, "AudioRenderer: MediaCodec rejected AAC-ELD; trying fdk-aac")
+                switchToSoftware("hw-rejected")
             }
         }
     }
@@ -73,7 +87,16 @@ class AudioRenderer(
     /** Native audio sink entry point (called from cb_audio_process via JNI). */
     fun onAudioFrame(data: ByteArray, ptsUs: Long) {
         synchronized(lock) {
-            if (released || codec == null) return
+            if (released) return
+            if (software) { decodeSoftware(data); return }
+            if (codec == null) return
+            hwIn++
+            // Watchdog: some head-unit decoders accept the ELD config but never emit PCM.
+            if (hwIn > HW_WATCHDOG_FRAMES && hwOut == 0) {
+                switchToSoftware("hw-silent")
+                decodeSoftware(data)
+                return
+            }
             pending.add(Au(data, ptsUs))
             drain()
         }
@@ -135,6 +158,7 @@ class AudioRenderer(
                             out.position(info.offset)
                             out.get(pcm)
                             track?.write(pcm, 0, pcm.size)
+                            hwOut++
                             onPcm(pcm.size)
                         }
                         mc.releaseOutputBuffer(i, false)
@@ -147,6 +171,8 @@ class AudioRenderer(
                 }
                 override fun onError(mc: MediaCodec, e: MediaCodec.CodecException) {
                     Log.e(TAG, "MediaCodec audio error: ${e.diagnosticInfo}", e)
+                    // Never release a MediaCodec from inside its own callback thread (can deadlock).
+                    Thread { synchronized(lock) { if (!software && !released) switchToSoftware("hw-error") } }.start()
                 }
             }, handler)
             c.configure(fmt, null, null, 0) // may throw on ELD-rejecting devices
@@ -164,6 +190,31 @@ class AudioRenderer(
             codecThread = null
             false
         }
+    }
+
+    /** Must hold [lock]. Tear down the platform decoder and route frames through fdk-aac. */
+    private fun switchToSoftware(reason: String) {
+        if (software) return
+        try { codec?.stop() } catch (_: Exception) {}
+        try { codec?.release() } catch (_: Exception) {}
+        codec = null
+        codecThread?.quitSafely()
+        codecThread = null
+        pending.clear()
+        freeInputs.clear()
+        val a = asc ?: return
+        val ok = runCatching { NativeBridge.nativeAacInit(a) }.getOrDefault(false)
+        software = ok
+        mode = if (ok) "sw($reason)" else "none($reason)"
+        Log.i(TAG, "AudioRenderer: switched to $mode")
+    }
+
+    /** Must hold [lock]. Decode one AU with fdk-aac and push it to the track without blocking. */
+    private fun decodeSoftware(data: ByteArray) {
+        val pcm = runCatching { NativeBridge.nativeAacDecode(data) }.getOrNull() ?: return
+        val t = track ?: return
+        runCatching { t.write(pcm, 0, pcm.size, AudioTrack.WRITE_NON_BLOCKING) }
+        onPcm(pcm.size * 2)
     }
 
     private fun buildAudioTrack(): Boolean {
@@ -213,6 +264,8 @@ class AudioRenderer(
             try { track?.stop() } catch (_: Exception) {}
             try { track?.release() } catch (_: Exception) {}
             track = null
+            if (software) runCatching { NativeBridge.nativeAacRelease() }
+            software = false
             pending.clear()
             freeInputs.clear()
         }
@@ -222,5 +275,6 @@ class AudioRenderer(
         const val TAG = "MirrorDrive"
         const val SAMPLE_RATE = 44100
         const val CHANNELS = 2
+        const val HW_WATCHDOG_FRAMES = 60   // ~0.7 s of ELD audio at 480 samples/frame
     }
 }

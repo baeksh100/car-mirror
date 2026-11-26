@@ -234,7 +234,7 @@ Java_com_example_mirrordrive_NativeBridge_nativeInit(JNIEnv *env, jobject, jstri
     // hw_addr is a raw 6-byte MAC (NOT the device_id string). Matches g_ctx.device_id.
     static const unsigned char HW[6] = {0x48,0x5D,0x60,0x7C,0xEE,0x22};
     int dnssd_err = 0;
-    g_ctx.dnssd = dnssd_init("MirrorDrive", 11, (const char*)HW, 6, &dnssd_err, 0);
+    g_ctx.dnssd = dnssd_init("CarMirror", 9, (const char*)HW, 6, &dnssd_err, 0);
     if (g_ctx.dnssd) { dnssd_set_pk(g_ctx.dnssd, g_ctx.pk_hex); raop_set_dnssd(g_ctx.raop, g_ctx.dnssd); }
     return JNI_TRUE;
 }
@@ -259,3 +259,65 @@ Java_com_example_mirrordrive_NativeBridge_nativeGetPort(JNIEnv *env, jobject) {
 // linked before because nothing referenced it (dead-stripped). Re-enabling the fallback requires
 // recompiling fdk-aac with -fPIC. Until then the MediaCodec AAC-ELD path (AudioRenderer) is the
 // sole decoder; the CMake fdkaac linkage is left in place (harmless while unreferenced).
+
+// ---------------------------------------------------------------------------------------------
+// CarMirror: fdk-aac AAC-ELD software decoder fallback.
+// Many car head units / cheap cast boxes have a platform AAC decoder that rejects (or silently
+// mis-decodes) the ELD profile AirPlay mirroring uses, so audio was silent there. The prebuilt
+// libfdk-aac.a is now compiled with -fPIC, so it can be linked into this shared library.
+// Only the AudioRenderer codec thread / JNI caller thread touches g_aac, serialized by the
+// Kotlin-side lock, so no native locking is needed here.
+// ---------------------------------------------------------------------------------------------
+#include <fdk-aac/aacdecoder_lib.h>
+
+static HANDLE_AACDECODER g_aac = nullptr;
+static INT_PCM g_pcm[2048 * 8];
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_mirrordrive_NativeBridge_nativeAacInit(JNIEnv *env, jobject, jbyteArray asc) {
+    if (g_aac) { aacDecoder_Close(g_aac); g_aac = nullptr; }
+    g_aac = aacDecoder_Open(TT_MP4_RAW, 1);
+    if (!g_aac) { LOGE("aacDecoder_Open failed"); return JNI_FALSE; }
+    jsize n = env->GetArrayLength(asc);
+    UCHAR conf[16];
+    if (n <= 0 || n > (jsize)sizeof(conf)) return JNI_FALSE;
+    env->GetByteArrayRegion(asc, 0, n, (jbyte*)conf);
+    UCHAR *confs[1] = { conf };
+    UINT lens[1] = { (UINT)n };
+    AAC_DECODER_ERROR e = aacDecoder_ConfigRaw(g_aac, confs, lens);
+    if (e != AAC_DEC_OK) {
+        LOGE("aacDecoder_ConfigRaw failed: 0x%x", e);
+        aacDecoder_Close(g_aac); g_aac = nullptr;
+        return JNI_FALSE;
+    }
+    LOGI("fdk-aac ELD decoder ready");
+    return JNI_TRUE;
+}
+
+// Decodes one raw AAC-ELD access unit to interleaved 16-bit PCM. Returns null on error.
+extern "C" JNIEXPORT jshortArray JNICALL
+Java_com_example_mirrordrive_NativeBridge_nativeAacDecode(JNIEnv *env, jobject, jbyteArray data) {
+    if (!g_aac) return nullptr;
+    jsize n = env->GetArrayLength(data);
+    if (n <= 0) return nullptr;
+    jbyte *buf = env->GetByteArrayElements(data, nullptr);
+    UCHAR *in[1] = { (UCHAR*)buf };
+    UINT size[1] = { (UINT)n };
+    UINT valid = (UINT)n;
+    AAC_DECODER_ERROR e = aacDecoder_Fill(g_aac, in, size, &valid);
+    env->ReleaseByteArrayElements(data, buf, JNI_ABORT);
+    if (e != AAC_DEC_OK) return nullptr;
+    e = aacDecoder_DecodeFrame(g_aac, g_pcm, (INT)(sizeof(g_pcm) / sizeof(g_pcm[0])), 0);
+    if (e != AAC_DEC_OK) return nullptr;
+    CStreamInfo *si = aacDecoder_GetStreamInfo(g_aac);
+    if (!si || si->frameSize <= 0 || si->numChannels <= 0) return nullptr;
+    jsize samples = si->frameSize * si->numChannels;
+    jshortArray out = env->NewShortArray(samples);
+    if (out) env->SetShortArrayRegion(out, 0, samples, (const jshort*)g_pcm);
+    return out;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_mirrordrive_NativeBridge_nativeAacRelease(JNIEnv *, jobject) {
+    if (g_aac) { aacDecoder_Close(g_aac); g_aac = nullptr; }
+}

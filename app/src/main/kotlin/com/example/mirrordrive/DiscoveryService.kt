@@ -1,10 +1,16 @@
 package com.example.mirrordrive
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.util.Log
-import java.net.InetAddress
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceInfo
 
@@ -31,37 +37,119 @@ fun raopTxt(pkHex: String): Map<String, String> = linkedMapOf(
 fun raopInstanceName(deviceId: String, friendly: String): String =
     deviceId.replace(":", "").uppercase() + "@" + friendly
 
+/**
+ * Advertises the receiver over mDNS/Bonjour so the iPhone lists it under Screen Mirroring.
+ *
+ * Car fix: the original started jmDNS exactly once, at service creation. In a car the box usually
+ * boots BEFORE the iPhone hotspot is joined, so there was no IPv4 yet, start failed, and nothing
+ * ever retried — the receiver stayed invisible until the app was force-restarted. Now we:
+ *  - watch network changes (ConnectivityManager callback) and re-advertise when addresses change,
+ *  - poll every few seconds as a safety net (some head-unit ROMs drop network callbacks),
+ *  - advertise on EVERY reachable local IPv4 instead of just the first one found.
+ */
 class DiscoveryService(private val context: Context) {
-    private var jmdns: JmDNS? = null
+    private val io = Executors.newSingleThreadScheduledExecutor()
+    private val instances = LinkedHashMap<String, JmDNS>()   // ip -> jmDNS bound to it
     private var lock: WifiManager.MulticastLock? = null
-    private val io = Executors.newSingleThreadExecutor()
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
+    private var poll: ScheduledFuture<*>? = null
+    private var pendingRefresh: ScheduledFuture<*>? = null
+    private var params: Params? = null
+
+    private data class Params(val name: String, val port: Int, val pkHex: String, val deviceId: String)
 
     fun start(name: String, port: Int, pkHex: String, deviceId: String) = io.execute {
-        // On an Ethernet-only or otherwise odd cast box, WIFI_SERVICE may be absent, the multicast
-        // lock may fail, or there may be no local IPv4 — any of which previously threw off this
-        // executor thread and killed the process. Wrap the whole start so a failure just disables
-        // discovery (mirroring won't work here) instead of crashing the app.
-        try {
-            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            lock = wifi.createMulticastLock("mirrordrive-mdns").apply {
-                setReferenceCounted(true); acquire()
-            }
-            // Enumerate interfaces (not the STA-only WifiInfo API) so this works on shared Wi-Fi,
-            // joined to an iPhone hotspot, or acting as the SoftAP hotspot itself.
-            val addr = localIpv4() ?: error("no local ipv4")
-            val jm = JmDNS.create(addr, name)
-            jm.registerService(ServiceInfo.create(
-                "_airplay._tcp.local.", name, port, 0, 0, airplayTxt(deviceId, pkHex)))
-            jm.registerService(ServiceInfo.create(
-                "_raop._tcp.local.", raopInstanceName(deviceId, name), port, 0, 0, raopTxt(pkHex)))
-            jmdns = jm
-        } catch (t: Throwable) {
-            Log.e("DiscoveryService", "mDNS discovery start failed; mirroring disabled here", t)
-        }
+        params = Params(name, port, pkHex, deviceId)
+        runCatching {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager?
+            lock = wifi?.createMulticastLock("carmirror-mdns")?.apply { setReferenceCounted(false); acquire() }
+        }.onFailure { Log.w(TAG, "multicast lock unavailable", it) }
+        registerNetworkCallback()
+        refresh("start")
+        poll = io.scheduleWithFixedDelay({ refresh("poll") }, POLL_S, POLL_S, TimeUnit.SECONDS)
     }
 
     fun stop() = io.execute {
-        jmdns?.unregisterAllServices(); jmdns?.close(); jmdns = null
+        poll?.cancel(false); poll = null
+        pendingRefresh?.cancel(false); pendingRefresh = null
+        netCallback?.let { cb ->
+            runCatching { connectivity()?.unregisterNetworkCallback(cb) }
+        }
+        netCallback = null
+        closeAll()
         lock?.let { if (it.isHeld) it.release() }; lock = null
+        status = "stopped"
+    }
+
+    private fun connectivity() =
+        context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
+
+    private fun registerNetworkCallback() {
+        val cm = connectivity() ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = scheduleRefresh("net+")
+            override fun onLost(network: Network) = scheduleRefresh("net-")
+            override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) = scheduleRefresh("link")
+        }
+        // Not only TRANSPORT_WIFI: we also want Ethernet/USB links and the SoftAP case.
+        val req = NetworkRequest.Builder()
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        runCatching { cm.registerNetworkCallback(req, cb); netCallback = cb }
+            .onFailure { Log.w(TAG, "network callback unavailable; relying on polling", it) }
+    }
+
+    /** Debounced: DHCP often fires several link changes within a second. */
+    private fun scheduleRefresh(reason: String) {
+        runCatching {
+            io.execute {
+                pendingRefresh?.cancel(false)
+                pendingRefresh = io.schedule({ refresh(reason) }, 1500, TimeUnit.MILLISECONDS)
+            }
+        }
+    }
+
+    /** Must run on [io]. Re-advertise so the set of bound addresses matches the current network. */
+    private fun refresh(reason: String) {
+        val p = params ?: return
+        val wanted = candidateIpv4s().associateBy { it.addr.hostAddress ?: "" }.filterKeys { it.isNotEmpty() }
+        if (wanted.keys == instances.keys && instances.isNotEmpty()) return
+
+        // Drop instances whose address disappeared.
+        (instances.keys - wanted.keys).toList().forEach { ip ->
+            instances.remove(ip)?.let { jm -> runCatching { jm.unregisterAllServices(); jm.close() } }
+        }
+        // Bind new addresses.
+        for ((ip, la) in wanted) {
+            if (ip in instances) continue
+            try {
+                val jm = JmDNS.create(la.addr, p.name)
+                jm.registerService(ServiceInfo.create(
+                    "_airplay._tcp.local.", p.name, p.port, 0, 0, airplayTxt(p.deviceId, p.pkHex)))
+                jm.registerService(ServiceInfo.create(
+                    "_raop._tcp.local.", raopInstanceName(p.deviceId, p.name), p.port, 0, 0, raopTxt(p.pkHex)))
+                instances[ip] = jm
+                Log.i(TAG, "advertising on ${la.text} port=${p.port} ($reason)")
+            } catch (t: Throwable) {
+                Log.e(TAG, "mDNS register failed on ${la.text}", t)
+                lastError = "${la.text}: ${t.javaClass.simpleName}"
+            }
+        }
+        status = if (instances.isEmpty()) "no-network(retrying)" else "on ${instances.keys.joinToString(",")}"
+        Log.i(TAG, "discovery $status ($reason)")
+    }
+
+    private fun closeAll() {
+        instances.values.forEach { jm -> runCatching { jm.unregisterAllServices(); jm.close() } }
+        instances.clear()
+    }
+
+    companion object {
+        private const val TAG = "DiscoveryService"
+        private const val POLL_S = 5L
+
+        /** Read by the on-screen diagnostic line. */
+        @Volatile var status: String = "init"
+        @Volatile var lastError: String = "-"
     }
 }

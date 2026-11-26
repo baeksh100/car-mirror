@@ -7,11 +7,11 @@ android {
     compileSdk = 34
     ndkVersion = "26.3.11579264"
     defaultConfig {
-        applicationId = "com.example.mirrordrive"
+        applicationId = "com.example.mirrordrive.car"
         minSdk = 29
         targetSdk = 32
         versionCode = 11
-        versionName = "0.92"
+        versionName = "0.92-car1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
