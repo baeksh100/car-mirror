@@ -151,6 +151,10 @@ class MainActivity : AppCompatActivity() {
         )
         setContentView(root)
 
+        // Experimental: touch the mirrored picture to drive the iPhone via the Bluetooth mouse.
+        aspectView.setOnTouchListener(MirrorTouch(this) { videoW to videoH })
+        if (MousePrefs.mirrorTouch(this)) runCatching { MouseHub.get(this).start() }
+
         overlayController = OverlayController(this)
         videoRenderer = VideoRenderer(
             // Fired after each frame is released to the Surface; just stamp the time so the
@@ -361,6 +365,11 @@ class MainActivity : AppCompatActivity() {
             waitingOverlay.setChecklist(checklistFor(DiscoveryService.status, ifs, snap))
         }
         updateNightDim()
+        // Touch control: (re)start the mouse if it isn't up yet (Bluetooth may come on late).
+        if (++mouseTick % 20 == 0 && MousePrefs.mirrorTouch(this)) runCatching {
+            val m = MouseHub.get(this)
+            if (!m.proxyRequested || (m.proxyReady && !m.registered)) m.start()
+        }
         // On-screen diagnostic (test builds): if fullscreen ever gets stuck on the waiting screen,
         // this line names why — decoder configured/released/error, whether the fullscreen Surface is
         // valid, the last setSurface outcome, and how long since the last rendered frame.
@@ -371,6 +380,8 @@ class MainActivity : AppCompatActivity() {
             waitingOverlay.setDebug("car7 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode} rec=${Session.decoderRecoveries}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
         }
     }
+
+    private var mouseTick = 0
 
     // ---- Night auto-dim ----------------------------------------------------------------------
     private lateinit var dimView: android.view.View
@@ -442,7 +453,7 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("취소", null)
             // Experimental: drive the iPhone from the car screen as a Bluetooth mouse.
-            .setNeutralButton("블루투스 마우스 시험") { _, _ ->
+            .setNeutralButton("아이폰 터치 조작") { _, _ ->
                 runCatching { startActivity(Intent(this, MouseTestActivity::class.java)) }
             }
             .show()
@@ -459,6 +470,7 @@ class MainActivity : AppCompatActivity() {
             // Audio has no surface; tear it down only when genuinely leaving mirroring
             // (never on the overlay/window-mode transition, which keeps the activity alive).
             if (::audioRenderer.isInitialized) audioRenderer.stop()
+            runCatching { MouseHub.release() }
         }
         super.onDestroy()
     }
