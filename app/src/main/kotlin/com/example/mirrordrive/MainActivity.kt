@@ -324,6 +324,7 @@ class MainActivity : AppCompatActivity() {
         }
         ui.removeCallbacks(waitingTick)
         ui.post(waitingTick)
+        if (MouseHub.calibrateRequested) { MouseHub.calibrateRequested = false; ui.postDelayed({ showCalibrate() }, 400) }
         // Give the receiver a few seconds to start (and a reconnecting iPhone to resume) first.
         ui.postDelayed({ if (!isFinishing) updateUi.autoCheck() }, 8_000)
         runCatching {
@@ -382,6 +383,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var mouseTick = 0
+    private var calibrate: CalibrateOverlay? = null
+
+    /** Show the on-mirror position calibration (asked for from the 아이폰 터치 조작 screen). */
+    private fun showCalibrate() {
+        if (calibrate != null || !::root.isInitialized) return
+        val c = CalibrateOverlay(this, aspectView, { videoW to videoH }) {
+            calibrate?.let { root.removeView(it) }; calibrate = null
+        }
+        calibrate = c
+        // Above the video and waiting screen, below the corner buttons (added later in onCreate).
+        root.addView(c, root.indexOfChild(dimView) + 1, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        c.start()
+    }
 
     // ---- Night auto-dim ----------------------------------------------------------------------
     private lateinit var dimView: android.view.View

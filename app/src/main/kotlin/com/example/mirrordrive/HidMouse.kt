@@ -346,6 +346,8 @@ object MouseHub {
     private val lines = ArrayDeque<String>()
     /** The screen currently showing mouse status (test screen); called on any change. */
     @Volatile var listener: (() -> Unit)? = null
+    /** The 아이폰 터치 조작 screen asked the mirror screen to run on-screen calibration. */
+    @Volatile var calibrateRequested = false
 
     fun get(ctx: Context): HidMouse = inst ?: synchronized(this) {
         inst ?: HidMouse(ctx.applicationContext, ::log) { listener?.invoke() }.also { inst = it }

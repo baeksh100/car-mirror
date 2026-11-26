@@ -112,9 +112,15 @@ class MouseTestActivity : AppCompatActivity() {
             button("감도 +") { sensitivity = (sensitivity + 0.25f).coerceAtMost(5f); refresh() },
         ))
 
-        col.addView(text("위치 맞추기 시험", 16f, Palette.MIRROR).apply { setPadding(0, dp(14), 0, 0) })
+        col.addView(text("위치 맞추기", 16f, Palette.MIRROR).apply { setPadding(0, dp(14), 0, 0) })
+        col.addView(button("미러링 화면에서 보면서 맞추기 (추천)") {
+            if (mouse.connected == null) { log("먼저 아이폰과 연결하세요"); return@button }
+            MousePrefs.setMirrorTouch(this, true)  // keeps the connection when this screen closes
+            MouseHub.calibrateRequested = true
+            finish()
+        })
         col.addView(text(
-            "'가로 끝까지'를 누르면 커서가 왼쪽 위 구석에 붙었다가 오른쪽으로 칸 수만큼 가요. " +
+            "직접 맞추기: '가로 끝까지'를 누르면 커서가 왼쪽 위 구석에 붙었다가 오른쪽으로 칸 수만큼 가요. " +
                 "딱 오른쪽 끝에 멈출 때까지 칸 수를 조절하세요. 세로도 같은 방법이에요.",
             13f, Palette.SILVER_DIM,
         ))
@@ -247,7 +253,7 @@ class MouseTestActivity : AppCompatActivity() {
         MouseHub.listener = null
         mouse.onFound = null
         // Keep the iPhone connected for touch control on the mirror screen; otherwise let go.
-        if (!MousePrefs.mirrorTouch(this)) MouseHub.release()
+        if (!MousePrefs.mirrorTouch(this) && !MouseHub.calibrateRequested) MouseHub.release()
         super.onDestroy()
     }
 

@@ -140,3 +140,13 @@ class PointerTracker(
 
     fun invalidate() { valid = false }
 }
+
+/**
+ * One-tap calibration: the pointer was pinned to the corner and moved [counts]; the user tapped
+ * where it stopped, at [fraction] of the screen. Returns counts for a full screen, or null when
+ * the tap is too close to an edge (the pointer may have been stopped by the edge) or the corner.
+ */
+fun calibrateFull(counts: Int, fraction: Float): Int? {
+    if (fraction < 0.05f || fraction > 0.85f) return null
+    return (counts / fraction).toInt().coerceIn(20, 5000)
+}
