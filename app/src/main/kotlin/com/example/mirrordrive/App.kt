@@ -17,8 +17,14 @@ import java.util.Locale
  * Nothing here touches the video/audio/decode pipeline; it only observes failures.
  */
 class App : Application() {
+    companion object {
+        /** Application context for helpers that have none (NetUtils). */
+        @Volatile var ctx: android.content.Context? = null
+    }
+
     override fun onCreate() {
         super.onCreate()
+        ctx = applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, err ->
             val header = buildString {
