@@ -89,6 +89,7 @@ class MainActivity : AppCompatActivity() {
         // video frame renders. It sits ABOVE the video root but BELOW the 창 모드 pill so the
         // control stays tappable, and owns no surface/video state.
         waitingOverlay = WaitingOverlayView(this)
+        waitingOverlay.onSettings = { showSettings() }
         root.addView(
             waitingOverlay,
             FrameLayout.LayoutParams(
@@ -314,6 +315,12 @@ class MainActivity : AppCompatActivity() {
             else -> waitingOverlay.fadeIn()
         }
         waitingOverlay.refreshDeviceInfoIfNeeded()
+        runCatching {
+            waitingOverlay.setGuidance(
+                guidanceFor(DiscoveryService.status, interfaceDump(),
+                    CarSettings.receiverName(this), NativeBridge.available),
+            )
+        }
         // On-screen diagnostic (test builds): if fullscreen ever gets stuck on the waiting screen,
         // this line names why — decoder configured/released/error, whether the fullscreen Surface is
         // valid, the last setSurface outcome, and how long since the last rendered frame.
@@ -321,8 +328,45 @@ class MainActivity : AppCompatActivity() {
             val age = if (lastFrameMs == 0L) "-" else "${SystemClock.uptimeMillis() - lastFrameMs}ms"
             val fsSurf = if (::surfaceView.isInitialized && surfaceView.holder.surface?.isValid == true) 1 else 0
             val codec = if (::videoRenderer.isInitialized) videoRenderer.debugLine() else "-"
-            waitingOverlay.setDebug("car5 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
+            waitingOverlay.setDebug("car6 net=${DiscoveryService.status} err=${DiscoveryService.lastError} audio=${AudioState.mode}\n${sourceDump()}\nifs=${interfaceDump()}\nov=${if (overlayActive) 1 else 0} fsSurf=$fsSurf f=$age $codec")
         }
+    }
+
+    /** Receiver name + auto-start, opened by long-pressing the CARMIRROR wordmark. */
+    private fun showSettings() {
+        val pad = dp(20)
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, dp(8), pad, 0)
+        }
+        val nameEdit = android.widget.EditText(this).apply {
+            setText(CarSettings.receiverName(this@MainActivity))
+            hint = CarSettings.DEFAULT_NAME
+            setSingleLine()
+            selectAll()
+        }
+        val auto = android.widget.CheckBox(this).apply {
+            text = "차 시동이 켜지면 자동으로 실행"
+            isChecked = CarSettings.autoStart(this@MainActivity)
+        }
+        box.addView(android.widget.TextView(this).apply { text = "아이폰 화면 미러링 목록에 보일 이름" })
+        box.addView(nameEdit)
+        box.addView(auto)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("CarMirror 설정")
+            .setView(box)
+            .setPositiveButton("저장") { _, _ ->
+                val old = CarSettings.receiverName(this)
+                CarSettings.setReceiverName(this, nameEdit.text.toString())
+                CarSettings.setAutoStart(this, auto.isChecked)
+                if (CarSettings.receiverName(this) != old) {
+                    runCatching {
+                        startService(Intent(this, ReceiverService::class.java).setAction(ReceiverService.ACTION_RENAME))
+                    }
+                }
+            }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     override fun onDestroy() {

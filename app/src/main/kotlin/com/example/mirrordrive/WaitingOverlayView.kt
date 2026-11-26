@@ -33,6 +33,9 @@ import android.widget.TextView
 class WaitingOverlayView(context: Context) : FrameLayout(context) {
     private val ripple = PulseIcon(context)
     private val deviceLine: TextView
+    private val guideText: TextView
+    /** Opened by long-pressing the wordmark. */
+    var onSettings: (() -> Unit)? = null
     private val debugText: TextView
     private var deviceInfoComplete = false
 
@@ -56,6 +59,10 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
         center.addView(
             TextView(context).apply {
                 text = "CARMIRROR"
+                contentDescription = "CarMirror 설정 (길게 누르기)"
+                // Long-press the wordmark for settings (receiver name, auto-start). Kept off the
+                // primary tap path so a stray touch while driving never opens a dialog.
+                setOnLongClickListener { onSettings?.invoke(); true }
                 setTextColor(Palette.SILVER)
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
@@ -64,15 +71,16 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
             },
             LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(10) },
         )
-        center.addView(
-            TextView(context).apply {
-                text = "아이폰 제어센터 → 화면 미러링 → CarMirror"
+        guideText = TextView(context).apply {
+                text = "준비 중이에요…"
                 setTextColor(Palette.SILVER_DIM)
                 typeface = Typeface.SANS_SERIF
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                 letterSpacing = 0.02f
                 gravity = Gravity.CENTER
-            },
+            }
+        center.addView(
+            guideText,
             LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = context.dp(10) },
         )
         // Car-context caveat: the iPhone cannot run wireless CarPlay and screen mirroring at the
@@ -155,15 +163,20 @@ class WaitingOverlayView(context: Context) : FrameLayout(context) {
     /** Update the on-screen diagnostic line (test builds). No-op-safe to call every tick. */
     fun setDebug(text: String) { debugText.text = text }
 
+    /** Plain-language status for the driver (see [guidanceFor]). */
+    fun setGuidance(g: Guidance) {
+        if (guideText.text != g.text) guideText.text = g.text
+        guideText.setTextColor(if (g.ok) Palette.MIRROR else Palette.SILVER_DIM)
+    }
+
     /** Read device id / port / local address (safe before native init: shows "—"). */
     fun refreshDeviceInfoIfNeeded() {
         // CarMirror: keep refreshing — the address changes when the hotspot connects later.
         val id = runCatching { NativeBridge.nativeGetDeviceId() }.getOrNull()?.takeIf { it.isNotBlank() }
         val port = runCatching { NativeBridge.nativeGetPort() }.getOrDefault(0)
         val ip = localIpv4String()
-        val idText = id ?: "—"
         val addrText = if (ip != null && port > 0) "$ip:$port" else "—"
-        deviceLine.text = "device $idText\n$addrText"
+        deviceLine.text = "${CarSettings.receiverName(context)} · $addrText"
     }
 
     /** Fade the waiting screen out (first frame rendered). Idempotent. */

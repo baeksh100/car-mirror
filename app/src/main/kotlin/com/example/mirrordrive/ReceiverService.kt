@@ -29,9 +29,15 @@ class ReceiverService : Service() {
             stopSelf()
             return
         }
+        acquireWifiLock()
+        startDiscovery()
+    }
+
+    /** Advertise under the user-chosen name; called again (after stop) when it is renamed. */
+    private fun startDiscovery() {
         discovery = DiscoveryService(this).also {
             it.start(
-                name = "CarMirror",
+                name = CarSettings.receiverName(this),
                 port = NativeBridge.nativeGetPort(),
                 pkHex = NativeBridge.nativeGetPublicKeyHex(),
                 deviceId = NativeBridge.nativeGetDeviceId(),
@@ -39,9 +45,30 @@ class ReceiverService : Service() {
         }
     }
 
-    override fun onDestroy() { discovery?.stop(); super.onDestroy() }
+    override fun onDestroy() {
+        discovery?.stop()
+        runCatching { wifiLock?.let { if (it.isHeld) it.release() } }
+        super.onDestroy()
+    }
+
+    // Wi-Fi power-save adds tens of ms of jitter per packet on many chipsets; mirroring is a
+    // constant real-time stream, so hold a low-latency lock while the receiver is running.
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    @Suppress("DEPRECATION")
+    private fun acquireWifiLock() = runCatching {
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+        val mode = if (Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            else android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        wifiLock = wm.createWifiLock(mode, "carmirror-stream").apply { setReferenceCounted(false); acquire() }
+    }.onFailure { Log.w(TAG, "wifi lock unavailable", it) }
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onStartCommand(i: Intent?, f: Int, id: Int) = START_STICKY
+    override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
+        if (i?.action == ACTION_RENAME && discovery != null) {
+            discovery?.stop()
+            startDiscovery()
+        }
+        return START_STICKY
+    }
 
     private fun startAsForeground() {
         val chId = "carmirror"
@@ -62,5 +89,6 @@ class ReceiverService : Service() {
 
     companion object {
         private const val TAG = "ReceiverService"
+        const val ACTION_RENAME = "carmirror.RENAME"
     }
 }
