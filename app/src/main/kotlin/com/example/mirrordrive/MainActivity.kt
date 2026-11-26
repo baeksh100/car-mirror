@@ -40,6 +40,8 @@ class MainActivity : AppCompatActivity() {
     // A UI-thread watchdog reads it to fade the waiting overlay in/out.
     @Volatile private var lastFrameMs = 0L
     private val ui = Handler(Looper.getMainLooper())
+    // In-app updater; the automatic check never interrupts a live mirror.
+    private val updateUi = UpdateUi(this) { SystemClock.uptimeMillis() - lastFrameMs < 5_000 }
     private val waitingTick = object : Runnable {
         override fun run() { updateWaiting(); ui.postDelayed(this, 700) }
     }
@@ -306,6 +308,8 @@ class MainActivity : AppCompatActivity() {
         }
         ui.removeCallbacks(waitingTick)
         ui.post(waitingTick)
+        // Give the receiver a few seconds to start (and a reconnecting iPhone to resume) first.
+        ui.postDelayed({ if (!isFinishing) updateUi.autoCheck() }, 8_000)
         runCatching {
             sensorManager()?.let { sm ->
                 sm.getDefaultSensor(android.hardware.Sensor.TYPE_LIGHT)?.let {
@@ -401,6 +405,14 @@ class MainActivity : AppCompatActivity() {
             isChecked = CarSettings.nightDim(this@MainActivity)
         }
         box.addView(dim)
+        box.addView(android.widget.TextView(this).apply {
+            text = "버전 ${Updater.localVersionName}"
+            setPadding(0, dp(12), 0, 0)
+        })
+        box.addView(android.widget.Button(this).apply {
+            text = "업데이트 확인"
+            setOnClickListener { updateUi.manualCheck() }
+        })
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("CarMirror 설정")
             .setView(box)
