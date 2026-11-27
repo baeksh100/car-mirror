@@ -54,6 +54,10 @@
   .apps button { min-height: 84px; font-size: 12px; padding: 8px 2px; }
   .apps img { width: 40px; height: 40px; border-radius: 10px; }
   .apps span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
+  .hint { font-weight: 400; font-size: 12px; margin-left: 6px; }
+  #textIn { width: 100%; font: inherit; font-size: 18px; color: var(--text); background: var(--btn);
+    border: 0; border-radius: 14px; padding: 14px; outline: none; -webkit-user-select: text; user-select: text; }
+  #textIn:focus { box-shadow: 0 0 0 2px var(--accent); }
   #toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%);
     background: #000c; color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px;
     opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap; }
@@ -73,6 +77,19 @@
     <button class="big" data-cmd="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>뒤로</button>
     <button class="big" data-cmd="home"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>홈<small id="homeName"></small></button>
     <button class="big" data-cmd="recents"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>최근 앱</button>
+  </div>
+</section>
+
+<section>
+  <h2>글자 보내기 <span class="hint">캐스트에서 입력칸을 먼저 누르세요</span></h2>
+  <form id="textForm" autocomplete="off">
+    <input id="textIn" type="text" enterkeyhint="send" placeholder="여기에 입력 (한글 가능)" autocapitalize="off" autocorrect="off" spellcheck="false">
+  </form>
+  <div class="row four" style="margin-top:10px">
+    <button id="sendText"><svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2-6z"/></svg>보내기</button>
+    <button data-cmd="backspace"><svg viewBox="0 0 24 24"><path d="M9 6h11v12H9l-5-6z"/><path d="M13 10l4 4M17 10l-4 4"/></svg>한 글자</button>
+    <button data-cmd="cleartext"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>지우기</button>
+    <button data-cmd="enter"><svg viewBox="0 0 24 24"><path d="M19 5v7H6"/><path d="M10 8l-4 4 4 4"/></svg>엔터</button>
   </div>
 </section>
 
@@ -121,6 +138,7 @@
 (function () {
   var key = new URLSearchParams(location.search).get('k') || '';
   var q = '?k=' + encodeURIComponent(key);
+  var TEXT_CMDS = { backspace: 1, cleartext: 1, enter: 1 };
   var dot = document.getElementById('dot'), state = document.getElementById('state');
   var toastEl = document.getElementById('toast'), toastTimer;
 
@@ -158,7 +176,14 @@
   document.querySelectorAll('[data-cmd]').forEach(function (b) {
     b.addEventListener('click', function () {
       call('/cmd/' + b.dataset.cmd).then(function (s) { flash(b, true); show(s); })
-        .catch(function () { flash(b, false); online(false); toast('캐스트에 연결되지 않았어요'); });
+        .catch(function (e) {
+          flash(b, false);
+          // A status code means the car answered but could not do it (e.g. no input box).
+          if (/^\d+$/.test(e.message)) {
+            online(true);
+            toast(TEXT_CMDS[b.dataset.cmd] ? '캐스트에서 입력칸을 먼저 눌러 주세요' : '캐스트에서 실행하지 못했어요');
+          } else { online(false); toast('캐스트에 연결되지 않았어요'); }
+        });
     });
   });
   // "홈 버튼 바꾸기": the next app tapped becomes what Home opens (e.g. the car mode launcher).
@@ -178,6 +203,21 @@
   document.getElementById('pickHome').addEventListener('click', function () { setPicking(!picking); });
   document.getElementById('pickCancel').addEventListener('click', function () { setPicking(false); });
   document.getElementById('pickDefault').addEventListener('click', function () { setHome(''); });
+
+  // Text: typed here, inserted at the cursor of the car's focused input box.
+  var textIn = document.getElementById('textIn'), sendBtn = document.getElementById('sendText');
+  function sendText() {
+    var t = textIn.value;
+    if (!t) { textIn.focus(); return; }
+    call('/text?t=' + encodeURIComponent(t)).then(function () {
+      flash(sendBtn, true); textIn.value = ''; toast('보냈어요');
+    }).catch(function (e) {
+      flash(sendBtn, false);
+      toast(/^\d+$/.test(e.message) ? '캐스트에서 입력칸을 먼저 눌러 주세요' : '캐스트에 연결되지 않았어요');
+    });
+  }
+  sendBtn.addEventListener('click', sendText);
+  document.getElementById('textForm').addEventListener('submit', function (e) { e.preventDefault(); sendText(); });
 
   document.getElementById('reload').addEventListener('click', function () { refresh(); loadApps(); });
 

@@ -46,6 +46,32 @@ class RemoteProtocolTest {
         assertEquals(RemoteRoute.NotFound, route("GET /sethome?k=$key&p=a/b HTTP/1.1"))
     }
 
+    @Test fun routesText() {
+        assertEquals(RemoteRoute.TypeText("안녕 하세요+1", false),
+            route("GET /text?k=$key&t=%EC%95%88%EB%85%95%20%ED%95%98%EC%84%B8%EC%9A%94%2B1 HTTP/1.1"))
+        assertEquals(RemoteRoute.TypeText("x", true), route("GET /text?k=$key&t=x&mode=replace HTTP/1.1"))
+        assertEquals(RemoteRoute.NotFound, route("GET /text?k=$key HTTP/1.1"))
+        assertEquals(RemoteRoute.Command(RemoteCommand.ENTER), route("GET /cmd/enter?k=$key HTTP/1.1"))
+    }
+
+    @Test fun insertsAtCursor() {
+        assertEquals("ab강남c" to 5, insertText("abc", false, 2, 2, "강남", false))
+        assertEquals("abc강남" to 5, insertText("abc", false, -1, -1, "강남", false))
+        assertEquals("a강남" to 3, insertText("abc", false, 1, 3, "강남", false))
+        assertEquals("강남" to 2, insertText("검색", true, 0, 0, "강남", false))
+        assertEquals("강남" to 2, insertText("abc", false, 1, 1, "강남", true))
+        assertEquals("x" to 1, insertText(null, false, 5, 9, "x", false))
+    }
+
+    @Test fun backspaces() {
+        assertEquals("ac" to 1, backspaceText("abc", false, 2, 2))
+        assertEquals("ab" to 2, backspaceText("abc", false, -1, -1))
+        assertEquals("a" to 1, backspaceText("abc", false, 1, 3))
+        assertEquals("abc" to 0, backspaceText("abc", false, 0, 0))
+        assertEquals("" to 0, backspaceText("검색", true, -1, -1))
+        assertEquals("a" to 1, backspaceText("a\uD83D\uDE00", false, -1, -1))
+    }
+
     @Test fun badPackageNameIsRejected() {
         assertEquals(RemoteRoute.NotFound, route("GET /open?k=$key&p=../etc HTTP/1.1"))
     }
