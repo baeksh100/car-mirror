@@ -31,6 +31,7 @@ import java.util.concurrent.Executors
 class RemoteControlService : AccessibilityService() {
     private val main = Handler(Looper.getMainLooper())
     private var server: ServerSocket? = null
+    private var mdns: RemoteMdns? = null
     private val pool = Executors.newFixedThreadPool(4)
     private val icons = ConcurrentHashMap<String, ByteArray>()
 
@@ -38,6 +39,7 @@ class RemoteControlService : AccessibilityService() {
         super.onServiceConnected()
         running = true
         startServer()
+        mdns = RemoteMdns(this).also { it.start() }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
@@ -45,6 +47,7 @@ class RemoteControlService : AccessibilityService() {
 
     override fun onDestroy() {
         running = false
+        runCatching { mdns?.stop() }
         runCatching { server?.close() }
         pool.shutdownNow()
         super.onDestroy()

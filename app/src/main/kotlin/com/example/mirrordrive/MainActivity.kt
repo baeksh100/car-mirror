@@ -498,29 +498,43 @@ class MainActivity : AppCompatActivity() {
                     .onFailure { runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) } }
             }
         })
-        val ip = candidateAddrs().firstOrNull { it.addr is java.net.Inet4Address }?.addr?.hostAddress
-        if (ip == null) {
+        val key = CarSettings.remoteKey(this)
+        val ipHosts = remoteIpHosts()
+        // The .local name keeps working when the hotspot hands out a new address, so it goes first.
+        val urls = buildList {
+            if (on) add("http://${RemoteMdns.REMOTE_HOST}.local:$REMOTE_PORT/?k=$key")
+            ipHosts.forEach { add("http://$it:$REMOTE_PORT/?k=$key") }
+        }
+        if (urls.isEmpty()) {
             box.addView(android.widget.TextView(this).apply { text = "와이파이(아이폰 핫스팟)에 연결되면 주소가 보여요." })
         } else {
-            val url = remoteUrl(ip, CarSettings.remoteKey(this))
             box.addView(android.widget.TextView(this).apply {
-                text = (if (on) "" else "2단계: ") + "아이폰 카메라로 QR을 찍어 사파리로 열고, 공유 → '홈 화면에 추가'를 누르세요."
+                text = (if (on) "" else "2단계: ") + "아이폰 카메라로 QR을 찍어 사파리로 열고, 공유 → '홈 화면에 추가'를 누르세요." +
+                    if (urls.size > 1) " 첫 번째 QR이 안 열리면 두 번째 QR을 써 보세요." else ""
                 setPadding(0, dp(12), 0, dp(8))
             })
-            runCatching { qrBitmap(url, dp(220)) }.getOrNull()?.let { bmp ->
-                box.addView(android.widget.ImageView(this).apply {
-                    setImageBitmap(bmp)
-                    layoutParams = android.widget.LinearLayout.LayoutParams(dp(220), dp(220)).apply {
-                        gravity = android.view.Gravity.CENTER_HORIZONTAL
-                    }
+            urls.take(2).forEachIndexed { i, url ->
+                if (urls.size > 1) box.addView(android.widget.TextView(this).apply {
+                    text = if (i == 0 && on) "QR 1 (고정 이름, 추천)" else "QR ${i + 1} (현재 주소)"
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                    setPadding(0, dp(12), 0, dp(4))
+                })
+                runCatching { qrBitmap(url, dp(200)) }.getOrNull()?.let { bmp ->
+                    box.addView(android.widget.ImageView(this).apply {
+                        setImageBitmap(bmp)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(dp(200), dp(200)).apply {
+                            gravity = android.view.Gravity.CENTER_HORIZONTAL
+                        }
+                    })
+                }
+                box.addView(android.widget.TextView(this).apply {
+                    text = url
+                    textSize = 12f
+                    setTextIsSelectable(true)
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                    setPadding(0, dp(4), 0, 0)
                 })
             }
-            box.addView(android.widget.TextView(this).apply {
-                text = url
-                setTextIsSelectable(true)
-                gravity = android.view.Gravity.CENTER_HORIZONTAL
-                setPadding(0, dp(8), 0, 0)
-            })
         }
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("아이폰 리모컨")
