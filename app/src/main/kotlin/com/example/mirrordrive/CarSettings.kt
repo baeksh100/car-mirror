@@ -33,6 +33,14 @@ object CarSettings {
     }
 
     private const val KEY_NIGHT_DIM = "night_dim"
+    private const val KEY_REMOTE = "remote_key"
+
+    /** Secret part of the iPhone remote's address; made once and kept. */
+    fun remoteKey(ctx: Context): String {
+        val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        p.getString(KEY_REMOTE, null)?.let { return it }
+        return newRemoteKey().also { p.edit().putString(KEY_REMOTE, it).apply() }
+    }
 }
 
 /**
