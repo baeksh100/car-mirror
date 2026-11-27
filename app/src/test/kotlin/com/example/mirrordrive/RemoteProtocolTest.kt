@@ -55,7 +55,7 @@ class RemoteProtocolTest {
     }
 
     @Test fun insertsAtCursor() {
-        assertEquals("ab강남c" to 5, insertText("abc", false, 2, 2, "강남", false))
+        assertEquals("ab강남c" to 4, insertText("abc", false, 2, 2, "강남", false))
         assertEquals("abc강남" to 5, insertText("abc", false, -1, -1, "강남", false))
         assertEquals("a강남" to 3, insertText("abc", false, 1, 3, "강남", false))
         assertEquals("강남" to 2, insertText("검색", true, 0, 0, "강남", false))
