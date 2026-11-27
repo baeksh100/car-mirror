@@ -33,6 +33,8 @@ sealed class RemoteRoute {
     data class Command(val cmd: RemoteCommand) : RemoteRoute()
     data class OpenApp(val pkg: String) : RemoteRoute()
     data class AppIcon(val pkg: String) : RemoteRoute()
+    /** Choose which app the Home button opens (null = Android's own home). */
+    data class SetHome(val pkg: String?) : RemoteRoute()
     object Forbidden : RemoteRoute()
     object NotFound : RemoteRoute()
 }
@@ -71,6 +73,8 @@ fun routeRemote(path: String, query: Map<String, String>, key: String): RemoteRo
         path == "/apps" -> RemoteRoute.Apps
         path == "/open" && pkg != null -> RemoteRoute.OpenApp(pkg)
         path == "/icon" && pkg != null -> RemoteRoute.AppIcon(pkg)
+        path == "/sethome" && query["p"].isNullOrEmpty() -> RemoteRoute.SetHome(null)
+        path == "/sethome" && pkg != null -> RemoteRoute.SetHome(pkg)
         path.startsWith("/cmd/") -> RemoteCommand.of(path.removePrefix("/cmd/"))
             ?.let { RemoteRoute.Command(it) } ?: RemoteRoute.NotFound
         else -> RemoteRoute.NotFound

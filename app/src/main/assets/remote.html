@@ -29,6 +29,15 @@
   section h2 { font-size: 13px; color: var(--sub); font-weight: 600; margin: 2px 4px 10px; }
   .row { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
   .row.four { grid-template-columns: repeat(4, 1fr); }
+  small { font-size: 11px; color: var(--sub); margin-top: -4px; max-width: 100%; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+  small:empty { display: none; }
+  .tag { font-size: 10px; color: var(--accent); }
+  .picking .apps button { outline: 2px dashed var(--accent); outline-offset: -2px; }
+  #pickBar { display: none; margin-bottom: 10px; }
+  .picking #pickBar { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  #pickBar button { min-height: 48px; }
+  .picking h2#appsTitle { color: var(--accent); }
   button { appearance: none; border: 0; border-radius: 14px; background: var(--btn); color: var(--text);
     font: inherit; font-size: 14px; padding: 12px 4px; min-height: 64px; touch-action: manipulation;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
@@ -62,7 +71,7 @@
 <section>
   <div class="row">
     <button class="big" data-cmd="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>뒤로</button>
-    <button class="big" data-cmd="home"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>홈</button>
+    <button class="big" data-cmd="home"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>홈<small id="homeName"></small></button>
     <button class="big" data-cmd="recents"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>최근 앱</button>
   </div>
 </section>
@@ -89,15 +98,20 @@
 
 <section>
   <h2>열기</h2>
-  <div class="row">
-    <button data-cmd="carmirror"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>미러링 화면</button>
-    <button data-cmd="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>캐스트 설정</button>
+  <div class="row four">
+    <button data-cmd="carmirror"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>미러링</button>
+    <button data-cmd="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>설정</button>
+    <button id="pickHome"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 9v3l2 2"/></svg>홈 바꾸기</button>
     <button id="reload"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 5v6h-6"/></svg>새로고침</button>
   </div>
 </section>
 
-<section>
-  <h2>캐스트 앱</h2>
+<section id="appsBox">
+  <h2 id="appsTitle">캐스트 앱</h2>
+  <div id="pickBar">
+    <button id="pickDefault">안드로이드 기본 홈</button>
+    <button id="pickCancel">취소</button>
+  </div>
   <div class="apps" id="apps"><div class="muted">불러오는 중…</div></div>
 </section>
 
@@ -133,6 +147,7 @@
     if (s.name) document.getElementById('name').textContent = s.name;
     if (s.max) document.getElementById('vol').style.width = (s.muted ? 0 : Math.round(100 * s.vol / s.max)) + '%';
     document.getElementById('muteLabel').textContent = s.muted ? '소리 켜기' : '음소거';
+    document.getElementById('homeName').textContent = s.homeName || '';
   }
 
   function flash(b, ok) {
@@ -146,6 +161,24 @@
         .catch(function () { flash(b, false); online(false); toast('캐스트에 연결되지 않았어요'); });
     });
   });
+  // "홈 버튼 바꾸기": the next app tapped becomes what Home opens (e.g. the car mode launcher).
+  var picking = false, title = document.getElementById('appsTitle');
+  function setPicking(on) {
+    picking = on;
+    document.body.classList.toggle('picking', on);
+    title.textContent = on ? '홈 버튼으로 열 앱을 누르세요' : '캐스트 앱';
+    if (on) document.getElementById('appsBox').scrollIntoView({ behavior: 'smooth' });
+  }
+  function setHome(p, b) {
+    call('/sethome?p=' + encodeURIComponent(p)).then(function (s) {
+      setPicking(false); show(s); if (b) flash(b, true);
+      toast(s.homeName ? '홈 버튼 → ' + s.homeName : '홈 버튼 → 안드로이드 기본 홈');
+    }).catch(function () { toast('바꾸지 못했어요'); });
+  }
+  document.getElementById('pickHome').addEventListener('click', function () { setPicking(!picking); });
+  document.getElementById('pickCancel').addEventListener('click', function () { setPicking(false); });
+  document.getElementById('pickDefault').addEventListener('click', function () { setHome(''); });
+
   document.getElementById('reload').addEventListener('click', function () { refresh(); loadApps(); });
 
   function loadApps() {
@@ -159,7 +192,9 @@
         img.src = '/icon?p=' + encodeURIComponent(a.p) + '&k=' + encodeURIComponent(key);
         var s = document.createElement('span'); s.textContent = a.n;
         b.appendChild(img); b.appendChild(s);
+        if (a.launcher) { var t = document.createElement('span'); t.className = 'tag'; t.textContent = '런처'; b.appendChild(t); }
         b.addEventListener('click', function () {
+          if (picking) return setHome(a.p, b);
           call('/open?p=' + encodeURIComponent(a.p)).then(function () { flash(b, true); })
             .catch(function () { flash(b, false); toast('앱을 열지 못했어요'); });
         });

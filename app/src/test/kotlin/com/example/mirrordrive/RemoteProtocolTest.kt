@@ -39,6 +39,13 @@ class RemoteProtocolTest {
         assertEquals(RemoteRoute.Forbidden, routeRemote("/cmd/home", mapOf("k" to ""), ""))
     }
 
+    @Test fun routesHomeChoice() {
+        assertEquals(RemoteRoute.SetHome("com.car.launcher"), route("GET /sethome?k=$key&p=com.car.launcher HTTP/1.1"))
+        assertEquals(RemoteRoute.SetHome(null), route("GET /sethome?k=$key&p= HTTP/1.1"))
+        assertEquals(RemoteRoute.SetHome(null), route("GET /sethome?k=$key HTTP/1.1"))
+        assertEquals(RemoteRoute.NotFound, route("GET /sethome?k=$key&p=a/b HTTP/1.1"))
+    }
+
     @Test fun badPackageNameIsRejected() {
         assertEquals(RemoteRoute.NotFound, route("GET /open?k=$key&p=../etc HTTP/1.1"))
     }

@@ -34,6 +34,15 @@ object CarSettings {
 
     private const val KEY_NIGHT_DIM = "night_dim"
     private const val KEY_REMOTE = "remote_key"
+    private const val KEY_REMOTE_HOME = "remote_home_pkg"
+
+    /** App the remote's Home button opens (the car's own launcher); null = Android home. */
+    fun remoteHome(ctx: Context): String? =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_REMOTE_HOME, null)
+
+    fun setRemoteHome(ctx: Context, pkg: String?) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_REMOTE_HOME, pkg).apply()
+    }
 
     /** Secret part of the iPhone remote's address; made once and kept. */
     fun remoteKey(ctx: Context): String {

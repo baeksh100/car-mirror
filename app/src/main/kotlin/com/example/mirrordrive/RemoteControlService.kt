@@ -87,8 +87,12 @@ class RemoteControlService : AccessibilityService() {
                     send(out, if (ok) 200 else 500, JSON, status().toByteArray())
                 }
                 is RemoteRoute.OpenApp -> {
-                    val ok = onMain { launch(packageManager.getLaunchIntentForPackage(route.pkg)) }
+                    val ok = onMain { launch(launchIntent(route.pkg)) }
                     send(out, if (ok) 200 else 404, JSON, "{\"ok\":$ok}".toByteArray())
+                }
+                is RemoteRoute.SetHome -> {
+                    CarSettings.setRemoteHome(this, route.pkg)
+                    send(out, 200, JSON, status().toByteArray())
                 }
                 RemoteRoute.Forbidden -> send(out, 403, "text/html; charset=utf-8", FORBIDDEN.toByteArray())
                 RemoteRoute.NotFound -> send(out, 404, "text/plain", "not found".toByteArray())
@@ -115,7 +119,9 @@ class RemoteControlService : AccessibilityService() {
     }
 
     private fun perform(cmd: RemoteCommand): Boolean = when (cmd) {
-        RemoteCommand.HOME -> performGlobalAction(GLOBAL_ACTION_HOME)
+        RemoteCommand.HOME -> homeTarget()
+            ?.let { runCatching { launch(launchIntent(it)) }.getOrDefault(false) }
+            ?.takeIf { it } ?: performGlobalAction(GLOBAL_ACTION_HOME)
         RemoteCommand.BACK -> performGlobalAction(GLOBAL_ACTION_BACK)
         RemoteCommand.RECENTS -> performGlobalAction(GLOBAL_ACTION_RECENTS)
         RemoteCommand.NOTIFICATIONS -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
@@ -133,6 +139,31 @@ class RemoteControlService : AccessibilityService() {
         i ?: return false
         startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED))
         return true
+    }
+
+    /**
+     * Where Home goes: the app the user picked on the remote, else the car's own launcher when
+     * there is exactly one launcher besides Android's default home (so the car mode opens with
+     * no setup), else null (Android's Home).
+     */
+    private fun homeTarget(): String? {
+        CarSettings.remoteHome(this)?.let { return it }
+        val pm = packageManager
+        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val default = pm.resolveActivity(homeIntent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.packageName
+        val others = pm.queryIntentActivities(homeIntent, 0).map { it.activityInfo.packageName }.distinct()
+            .filter { it != default && it != packageName && it != "android" && it != "com.android.settings" }
+        return others.singleOrNull()
+    }
+
+    /** Normal app entry, or for a launcher-only app (car mode) its home screen activity. */
+    private fun launchIntent(pkg: String): Intent? {
+        packageManager.getLaunchIntentForPackage(pkg)?.let { return it }
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(pkg)
+        val ri = packageManager.queryIntentActivities(home, 0).firstOrNull() ?: return null
+        return Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            .setClassName(ri.activityInfo.packageName, ri.activityInfo.name)
     }
 
     /** A finger swipe in the middle of the car screen; [up] moves the finger up (shows what is below). */
@@ -158,17 +189,25 @@ class RemoteControlService : AccessibilityService() {
         val v = a.getStreamVolume(AudioManager.STREAM_MUSIC)
         val m = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val muted = a.isStreamMute(AudioManager.STREAM_MUSIC)
-        return "{\"ok\":true,\"vol\":$v,\"max\":$m,\"muted\":$muted,\"name\":${jsonStr(CarSettings.receiverName(this))}}"
+        val home = homeTarget()
+        val homeName = home?.let { runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(it, 0)).toString() }.getOrDefault(it) }
+        return "{\"ok\":true,\"vol\":$v,\"max\":$m,\"muted\":$muted,\"name\":${jsonStr(CarSettings.receiverName(this))}," +
+            "\"home\":${home?.let { jsonStr(it) } ?: "null"},\"homeName\":${homeName?.let { jsonStr(it) } ?: "null"}}"
     }
 
     private fun apps(): String {
         val pm = packageManager
-        val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val list = pm.queryIntentActivities(i, 0)
+        // Launchers (the car mode app may only be a HOME app) first, then ordinary apps.
+        val homes = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
+        val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+        val homePkgs = homes.map { it.activityInfo.packageName }.toSet()
+        val list = (homes + apps)
             .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
             .distinctBy { it.first }
-            .sortedBy { it.second.lowercase() }
-        return list.joinToString(",", "[", "]") { (p, n) -> "{\"p\":${jsonStr(p)},\"n\":${jsonStr(n)}}" }
+            .sortedWith(compareBy({ it.first !in homePkgs }, { it.second.lowercase() }))
+        return list.joinToString(",", "[", "]") { (p, n) ->
+            "{\"p\":${jsonStr(p)},\"n\":${jsonStr(n)},\"launcher\":${p in homePkgs}}"
+        }
     }
 
     private fun icon(pkg: String, size: Int): ByteArray = icons.getOrPut("$pkg@$size") {
