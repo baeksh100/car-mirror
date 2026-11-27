@@ -24,6 +24,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          # Keep downloaded libraries between runs (fewer Maven Central requests).
+          cache: gradle
 
       - name: Android SDK packages
         run: |

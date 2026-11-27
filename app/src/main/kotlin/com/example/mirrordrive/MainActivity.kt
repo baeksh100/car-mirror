@@ -451,6 +451,10 @@ class MainActivity : AppCompatActivity() {
             text = "업데이트 확인"
             setOnClickListener { updateUi.manualCheck() }
         })
+        box.addView(android.widget.Button(this).apply {
+            text = "아이폰 리모컨 (홈·뒤로 버튼)"
+            setOnClickListener { showRemote() }
+        })
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("CarMirror 설정")
             .setView(box)
@@ -472,6 +476,64 @@ class MainActivity : AppCompatActivity() {
                 runCatching { startActivity(Intent(this, MouseTestActivity::class.java)) }
             }
             .show()
+    }
+
+    /** How to set up the iPhone remote: switch it on, then scan the QR code with the iPhone. */
+    private fun showRemote() {
+        val pad = dp(20)
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, dp(8), pad, 0)
+        }
+        val on = RemoteControlService.isEnabled(this)
+        box.addView(android.widget.TextView(this).apply {
+            text = if (on) "리모컨 켜짐" else
+                "1단계: 아래 버튼을 눌러 접근성 메뉴에서 'CarMirror 아이폰 리모컨'을 켜 주세요."
+            textSize = 16f
+        })
+        if (!on) box.addView(android.widget.Button(this).apply {
+            text = "접근성 설정 열기"
+            setOnClickListener {
+                runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                    .onFailure { runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) } }
+            }
+        })
+        val ip = candidateAddrs().firstOrNull { it.addr is java.net.Inet4Address }?.addr?.hostAddress
+        if (ip == null) {
+            box.addView(android.widget.TextView(this).apply { text = "와이파이(아이폰 핫스팟)에 연결되면 주소가 보여요." })
+        } else {
+            val url = remoteUrl(ip, CarSettings.remoteKey(this))
+            box.addView(android.widget.TextView(this).apply {
+                text = (if (on) "" else "2단계: ") + "아이폰 카메라로 QR을 찍어 사파리로 열고, 공유 → '홈 화면에 추가'를 누르세요."
+                setPadding(0, dp(12), 0, dp(8))
+            })
+            runCatching { qrBitmap(url, dp(220)) }.getOrNull()?.let { bmp ->
+                box.addView(android.widget.ImageView(this).apply {
+                    setImageBitmap(bmp)
+                    layoutParams = android.widget.LinearLayout.LayoutParams(dp(220), dp(220)).apply {
+                        gravity = android.view.Gravity.CENTER_HORIZONTAL
+                    }
+                })
+            }
+            box.addView(android.widget.TextView(this).apply {
+                text = url
+                setTextIsSelectable(true)
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("아이폰 리모컨")
+            .setView(android.widget.ScrollView(this).apply { addView(box) })
+            .setPositiveButton("닫기", null)
+            .show()
+    }
+
+    private fun qrBitmap(text: String, size: Int): android.graphics.Bitmap {
+        val m = com.google.zxing.qrcode.QRCodeWriter()
+            .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size, mapOf(com.google.zxing.EncodeHintType.MARGIN to 1))
+        val px = IntArray(size * size) { if (m[it % size, it / size]) Color.BLACK else Color.WHITE }
+        return android.graphics.Bitmap.createBitmap(px, size, size, android.graphics.Bitmap.Config.ARGB_8888)
     }
 
     override fun onDestroy() {

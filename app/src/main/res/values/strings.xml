@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_accessibility_desc">아이폰 사파리의 CarMirror 리모컨으로 이 화면의 홈, 뒤로, 최근 앱, 볼륨 등을 누를 수 있게 해요. 화면 내용은 읽지 않아요.</string>
+</resources>
