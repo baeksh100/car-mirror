@@ -43,7 +43,17 @@ class RemoteControlService : AccessibilityService() {
         mdns = RemoteMdns(this).also { it.start() }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Learn which apps are used on the cast, to order the remote's app list.
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == packageName || pkg == "com.android.systemui" || pkg == "android") return
+        if (packageManager.getLaunchIntentForPackage(pkg) == null && !isLauncher(pkg)) return
+        runCatching { AppUsage.record(this, pkg) }
+    }
+
+    private fun isLauncher(pkg: String) = packageManager.queryIntentActivities(
+        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(pkg), 0).isNotEmpty()
     override fun onInterrupt() {}
 
     override fun onDestroy() {
@@ -92,11 +102,16 @@ class RemoteControlService : AccessibilityService() {
                 }
                 is RemoteRoute.OpenApp -> {
                     val ok = onMain { launch(launchIntent(route.pkg)) }
+                    if (ok) runCatching { AppUsage.record(this, route.pkg) }
                     send(out, if (ok) 200 else 404, JSON, "{\"ok\":$ok}".toByteArray())
                 }
                 is RemoteRoute.TypeText -> {
                     val ok = onMain { typeText(route.text, route.replace) }
                     send(out, if (ok) 200 else 409, JSON, "{\"ok\":$ok}".toByteArray())
+                }
+                is RemoteRoute.Pin -> {
+                    AppUsage.setPinned(this, route.pkg, route.on)
+                    send(out, 200, JSON, "{\"ok\":true}".toByteArray())
                 }
                 is RemoteRoute.SetHome -> {
                     CarSettings.setRemoteHome(this, route.pkg)
@@ -276,16 +291,18 @@ class RemoteControlService : AccessibilityService() {
 
     private fun apps(): String {
         val pm = packageManager
-        // Launchers (the car mode app may only be a HOME app) first, then ordinary apps.
+        // Launchers too: the car mode app may only be a HOME app.
         val homes = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
         val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
         val homePkgs = homes.map { it.activityInfo.packageName }.toSet()
         val list = (homes + apps)
             .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
             .distinctBy { it.first }
-            .sortedWith(compareBy({ it.first !in homePkgs }, { it.second.lowercase() }))
-        return list.joinToString(",", "[", "]") { (p, n) ->
-            "{\"p\":${jsonStr(p)},\"n\":${jsonStr(n)},\"launcher\":${p in homePkgs}}"
+        val pins = AppUsage.pins(this)
+        val now = System.currentTimeMillis()
+        val ordered = orderApps(list, pins) { AppUsage.score(this, it, now) }
+        return ordered.joinToString(",", "[", "]") { (p, n) ->
+            "{\"p\":${jsonStr(p)},\"n\":${jsonStr(n)},\"launcher\":${p in homePkgs},\"pin\":${p in pins}}"
         }
     }
 

@@ -36,6 +36,8 @@ sealed class RemoteRoute {
     data class AppIcon(val pkg: String) : RemoteRoute()
     /** Choose which app the Home button opens (null = Android's own home). */
     data class SetHome(val pkg: String?) : RemoteRoute()
+    /** Keep an app at the front of the remote's list (or stop keeping it). */
+    data class Pin(val pkg: String, val on: Boolean) : RemoteRoute()
     /** Type [text] into the car's focused input box; [replace] clears what is there first. */
     data class TypeText(val text: String, val replace: Boolean) : RemoteRoute()
     object Forbidden : RemoteRoute()
@@ -78,6 +80,7 @@ fun routeRemote(path: String, query: Map<String, String>, key: String): RemoteRo
         path == "/icon" && pkg != null -> RemoteRoute.AppIcon(pkg)
         path == "/sethome" && query["p"].isNullOrEmpty() -> RemoteRoute.SetHome(null)
         path == "/sethome" && pkg != null -> RemoteRoute.SetHome(pkg)
+        path == "/pin" && pkg != null -> RemoteRoute.Pin(pkg, query["on"] != "0")
         path == "/text" && !query["t"].isNullOrEmpty() ->
             RemoteRoute.TypeText(query.getValue("t").take(MAX_TEXT), query["mode"] == "replace")
         path.startsWith("/cmd/") -> RemoteCommand.of(path.removePrefix("/cmd/"))

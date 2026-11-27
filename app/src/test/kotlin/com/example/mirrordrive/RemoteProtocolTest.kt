@@ -72,6 +72,25 @@ class RemoteProtocolTest {
         assertEquals("a" to 1, backspaceText("a\uD83D\uDE00", false, -1, -1))
     }
 
+    @Test fun routesPin() {
+        assertEquals(RemoteRoute.Pin("com.a", true), route("GET /pin?k=$key&p=com.a&on=1 HTTP/1.1"))
+        assertEquals(RemoteRoute.Pin("com.a", false), route("GET /pin?k=$key&p=com.a&on=0 HTTP/1.1"))
+    }
+
+    @Test fun ordersPinnedThenUsedThenName() {
+        val apps = listOf("c" to "Cee", "a" to "Ay", "b" to "Bee", "d" to "Dee")
+        val score = mapOf("b" to 5.0, "d" to 1.0)
+        val out = orderApps(apps, listOf("c")) { score[it] ?: 0.0 }.map { it.first }
+        assertEquals(listOf("c", "b", "d", "a"), out)
+    }
+
+    @Test fun usageFadesWithAge() {
+        val day = 24L * 3600 * 1000
+        assertEquals(4.0, AppUsage.decayed(4.0, 0, 0), 1e-9)
+        assertEquals(2.0, AppUsage.decayed(4.0, 0, 14 * day), 1e-9)
+        assertEquals(0.0, AppUsage.decayed(0.0, 0, day), 1e-9)
+    }
+
     @Test fun badPackageNameIsRejected() {
         assertEquals(RemoteRoute.NotFound, route("GET /open?k=$key&p=../etc HTTP/1.1"))
     }

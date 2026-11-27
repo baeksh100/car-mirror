@@ -38,7 +38,7 @@
   .picking #pickBar { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
   #pickBar button { min-height: 48px; }
   .picking h2#appsTitle { color: var(--accent); }
-  button { appearance: none; border: 0; border-radius: 14px; background: var(--btn); color: var(--text);
+  button { -webkit-touch-callout: none; appearance: none; border: 0; border-radius: 14px; background: var(--btn); color: var(--text);
     font: inherit; font-size: 14px; padding: 12px 4px; min-height: 64px; touch-action: manipulation;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
     transition: background .15s, transform .08s; }
@@ -124,7 +124,8 @@
 </section>
 
 <section id="appsBox">
-  <h2 id="appsTitle">캐스트 앱</h2>
+  <h2 id="appsTitle">캐스트 앱 (자주 쓰는 순)</h2>
+  <div class="muted" id="pinHint" style="margin:-4px 4px 10px">길게 누르면 맨 앞에 고정(★), 다시 길게 누르면 풀려요.</div>
   <div id="pickBar">
     <button id="pickDefault">안드로이드 기본 홈</button>
     <button id="pickCancel">취소</button>
@@ -191,7 +192,7 @@
   function setPicking(on) {
     picking = on;
     document.body.classList.toggle('picking', on);
-    title.textContent = on ? '홈 버튼으로 열 앱을 누르세요' : '캐스트 앱';
+    title.textContent = on ? '홈 버튼으로 열 앱을 누르세요' : '캐스트 앱 (자주 쓰는 순)';
     if (on) document.getElementById('appsBox').scrollIntoView({ behavior: 'smooth' });
   }
   function setHome(p, b) {
@@ -232,8 +233,30 @@
         img.src = '/icon?p=' + encodeURIComponent(a.p) + '&k=' + encodeURIComponent(key);
         var s = document.createElement('span'); s.textContent = a.n;
         b.appendChild(img); b.appendChild(s);
-        if (a.launcher) { var t = document.createElement('span'); t.className = 'tag'; t.textContent = '런처'; b.appendChild(t); }
+        if (a.launcher || a.pin) {
+          var t = document.createElement('span'); t.className = 'tag';
+          t.textContent = (a.pin ? '★ ' : '') + (a.launcher ? '런처' : '고정'); b.appendChild(t);
+        }
+        // Long press = pin / unpin (keeps the app at the front of this list).
+        var pressTimer = null, longPressed = false;
+        function startPress() {
+          longPressed = false;
+          pressTimer = setTimeout(function () {
+            longPressed = true;
+            call('/pin?p=' + encodeURIComponent(a.p) + '&on=' + (a.pin ? '0' : '1')).then(function () {
+              toast(a.pin ? a.n + ' 고정 풀었어요' : a.n + ' 맨 앞에 고정했어요'); loadApps();
+            }).catch(function () { toast('고정하지 못했어요'); });
+          }, 550);
+        }
+        function endPress() { clearTimeout(pressTimer); }
+        b.addEventListener('touchstart', startPress, { passive: true });
+        b.addEventListener('touchend', endPress);
+        b.addEventListener('touchmove', endPress, { passive: true });
+        b.addEventListener('mousedown', startPress);
+        b.addEventListener('mouseup', endPress);
+        b.addEventListener('contextmenu', function (e) { e.preventDefault(); });
         b.addEventListener('click', function () {
+          if (longPressed) { longPressed = false; return; }
           if (picking) return setHome(a.p, b);
           call('/open?p=' + encodeURIComponent(a.p)).then(function () { flash(b, true); })
             .catch(function () { flash(b, false); toast('앱을 열지 못했어요'); });
