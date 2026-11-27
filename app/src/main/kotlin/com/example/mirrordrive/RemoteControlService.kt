@@ -310,7 +310,7 @@ class RemoteControlService : AccessibilityService() {
         val muted = a.isStreamMute(AudioManager.STREAM_MUSIC)
         val home = homeTarget()
         val homeName = home?.let { runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(it, 0)).toString() }.getOrDefault(it) }
-        return "{\"ok\":true,\"vol\":$v,\"max\":$m,\"muted\":$muted,\"name\":${jsonStr(CarSettings.receiverName(this))}," +
+        return "{\"ok\":true,\"ver\":${BuildConfig.VERSION_CODE},\"vol\":$v,\"max\":$m,\"muted\":$muted,\"name\":${jsonStr(CarSettings.receiverName(this))}," +
             "\"home\":${home?.let { jsonStr(it) } ?: "null"},\"homeName\":${homeName?.let { jsonStr(it) } ?: "null"}}"
     }
 
