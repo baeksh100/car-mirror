@@ -96,7 +96,11 @@ class RemoteControlService : AccessibilityService() {
                 RemoteRoute.Apps -> send(out, 200, JSON, apps().toByteArray())
                 RemoteRoute.TouchIcon -> send(out, 200, "image/png", icon(packageName, 180), cache = true)
                 is RemoteRoute.AppIcon -> send(out, 200, "image/png", icon(route.pkg, 96), cache = true)
-                is RemoteRoute.Command -> {
+                is RemoteRoute.Command -> if (route.cmd == RemoteCommand.REBOOT) {
+                    // Off the main thread: asking for root can take a few seconds.
+                    val mode = reboot()
+                    send(out, if (mode == null) 500 else 200, JSON, "{\"ok\":${mode != null},\"mode\":${jsonStr(mode ?: "")}}".toByteArray())
+                } else {
                     val ok = onMain { perform(route.cmd) }
                     send(out, if (ok) 200 else 500, JSON, status().toByteArray())
                 }
@@ -157,6 +161,8 @@ class RemoteControlService : AccessibilityService() {
         RemoteCommand.SETTINGS -> launch(Intent(Settings.ACTION_SETTINGS))
         RemoteCommand.CARMIRROR -> launch(Intent(this, MainActivity::class.java))
         RemoteCommand.ENTER -> enter()
+        RemoteCommand.POWER_MENU -> performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)
+        RemoteCommand.REBOOT -> false   // handled off the main thread, see reboot()
         RemoteCommand.CLEAR_TEXT -> editFocused { n -> setText(n, "", 0) }
         RemoteCommand.BACKSPACE -> editFocused { n ->
             val (t, c) = backspaceText(n.text?.toString(), hint(n), n.textSelectionStart, n.textSelectionEnd)
@@ -193,6 +199,25 @@ class RemoteControlService : AccessibilityService() {
         val ri = packageManager.queryIntentActivities(home, 0).firstOrNull() ?: return null
         return Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
             .setClassName(ri.activityInfo.packageName, ri.activityInfo.name)
+    }
+
+    /**
+     * Restart the cast. An ordinary app may not reboot the device, so: if the cast is rooted
+     * (many head units are), "su -c reboot"; otherwise open the power menu so "다시 시작" is one tap
+     * on the car screen. Returns "reboot", "dialog", or null when neither worked.
+     */
+    private fun reboot(): String? {
+        val hasSu = listOf("/system/xbin/su", "/system/bin/su", "/sbin/su", "/su/bin/su", "/debug_ramdisk/su")
+            .any { java.io.File(it).exists() }
+        if (hasSu) {
+            val ok = runCatching {
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+                // A successful reboot never returns; a refusal exits non-zero quickly.
+                !p.waitFor(8, java.util.concurrent.TimeUnit.SECONDS) || p.exitValue() == 0
+            }.getOrDefault(false)
+            if (ok) return "reboot"
+        }
+        return if (onMain { performGlobalAction(GLOBAL_ACTION_POWER_DIALOG) }) "dialog" else null
     }
 
     // ---- typing into the car's input box -----------------------------------------------------

@@ -18,7 +18,8 @@ enum class RemoteCommand(val id: String) {
     SCROLL_UP("scrollup"), SCROLL_DOWN("scrolldown"),
     VOLUME_UP("volup"), VOLUME_DOWN("voldown"), MUTE("mute"),
     SETTINGS("settings"), CARMIRROR("carmirror"),
-    ENTER("enter"), CLEAR_TEXT("cleartext"), BACKSPACE("backspace");
+    ENTER("enter"), CLEAR_TEXT("cleartext"), BACKSPACE("backspace"),
+    POWER_MENU("power"), REBOOT("reboot");
 
     companion object {
         fun of(id: String): RemoteCommand? = values().firstOrNull { it.id == id }

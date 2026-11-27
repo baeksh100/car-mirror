@@ -52,6 +52,7 @@ class RemoteProtocolTest {
         assertEquals(RemoteRoute.TypeText("x", true), route("GET /text?k=$key&t=x&mode=replace HTTP/1.1"))
         assertEquals(RemoteRoute.NotFound, route("GET /text?k=$key HTTP/1.1"))
         assertEquals(RemoteRoute.Command(RemoteCommand.ENTER), route("GET /cmd/enter?k=$key HTTP/1.1"))
+        assertEquals(RemoteRoute.Command(RemoteCommand.REBOOT), route("GET /cmd/reboot?k=$key HTTP/1.1"))
     }
 
     @Test fun insertsAtCursor() {
