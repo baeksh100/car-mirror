@@ -169,8 +169,15 @@
     state.textContent = ok ? '연결됨' : '연결 안 됨';
   }
 
+  // The page comes from the CarMirror app on the cast; after the app updates, reload once so the
+  // home-screen remote shows the new buttons without a manual refresh.
+  var pageVer = null;
   function show(s) {
     online(true);
+    if (s.ver) {
+      if (pageVer === null) pageVer = s.ver;
+      else if (s.ver !== pageVer) { location.reload(); return; }
+    }
     if (s.name) document.getElementById('name').textContent = s.name;
     if (s.max) document.getElementById('vol').style.width = (s.muted ? 0 : Math.round(100 * s.vol / s.max)) + '%';
     document.getElementById('muteLabel').textContent = s.muted ? '소리 켜기' : '음소거';
