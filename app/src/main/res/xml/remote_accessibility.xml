@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- iPhone remote: only global actions (Home/Back/…) and a simple swipe; it reads no screen content. -->
+<!-- iPhone remote: global actions (Home/Back/…), a simple swipe, and typing into the focused input box. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/remote_accessibility_desc"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="1000"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false"/>
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"/>

@@ -13,6 +13,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
@@ -42,7 +43,17 @@ class RemoteControlService : AccessibilityService() {
         mdns = RemoteMdns(this).also { it.start() }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Learn which apps are used on the cast, to order the remote's app list.
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == packageName || pkg == "com.android.systemui" || pkg == "android") return
+        if (packageManager.getLaunchIntentForPackage(pkg) == null && !isLauncher(pkg)) return
+        runCatching { AppUsage.record(this, pkg) }
+    }
+
+    private fun isLauncher(pkg: String) = packageManager.queryIntentActivities(
+        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(pkg), 0).isNotEmpty()
     override fun onInterrupt() {}
 
     override fun onDestroy() {
@@ -85,13 +96,26 @@ class RemoteControlService : AccessibilityService() {
                 RemoteRoute.Apps -> send(out, 200, JSON, apps().toByteArray())
                 RemoteRoute.TouchIcon -> send(out, 200, "image/png", icon(packageName, 180), cache = true)
                 is RemoteRoute.AppIcon -> send(out, 200, "image/png", icon(route.pkg, 96), cache = true)
-                is RemoteRoute.Command -> {
+                is RemoteRoute.Command -> if (route.cmd == RemoteCommand.REBOOT) {
+                    // Off the main thread: asking for root can take a few seconds.
+                    val mode = reboot()
+                    send(out, if (mode == null) 500 else 200, JSON, "{\"ok\":${mode != null},\"mode\":${jsonStr(mode ?: "")}}".toByteArray())
+                } else {
                     val ok = onMain { perform(route.cmd) }
                     send(out, if (ok) 200 else 500, JSON, status().toByteArray())
                 }
                 is RemoteRoute.OpenApp -> {
                     val ok = onMain { launch(launchIntent(route.pkg)) }
+                    if (ok) runCatching { AppUsage.record(this, route.pkg) }
                     send(out, if (ok) 200 else 404, JSON, "{\"ok\":$ok}".toByteArray())
+                }
+                is RemoteRoute.TypeText -> {
+                    val ok = onMain { typeText(route.text, route.replace) }
+                    send(out, if (ok) 200 else 409, JSON, "{\"ok\":$ok}".toByteArray())
+                }
+                is RemoteRoute.Pin -> {
+                    AppUsage.setPinned(this, route.pkg, route.on)
+                    send(out, 200, JSON, "{\"ok\":true}".toByteArray())
                 }
                 is RemoteRoute.SetHome -> {
                     CarSettings.setRemoteHome(this, route.pkg)
@@ -136,6 +160,14 @@ class RemoteControlService : AccessibilityService() {
         RemoteCommand.MUTE -> volume(AudioManager.ADJUST_TOGGLE_MUTE)
         RemoteCommand.SETTINGS -> launch(Intent(Settings.ACTION_SETTINGS))
         RemoteCommand.CARMIRROR -> launch(Intent(this, MainActivity::class.java))
+        RemoteCommand.ENTER -> enter()
+        RemoteCommand.POWER_MENU -> performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)
+        RemoteCommand.REBOOT -> false   // handled off the main thread, see reboot()
+        RemoteCommand.CLEAR_TEXT -> editFocused { n -> setText(n, "", 0) }
+        RemoteCommand.BACKSPACE -> editFocused { n ->
+            val (t, c) = backspaceText(n.text?.toString(), hint(n), n.textSelectionStart, n.textSelectionEnd)
+            setText(n, t, c)
+        }
     }
 
     private fun launch(i: Intent?): Boolean {
@@ -169,6 +201,90 @@ class RemoteControlService : AccessibilityService() {
             .setClassName(ri.activityInfo.packageName, ri.activityInfo.name)
     }
 
+    /**
+     * Restart the cast. An ordinary app may not reboot the device, so: if the cast is rooted
+     * (many head units are), "su -c reboot"; otherwise open the power menu so "다시 시작" is one tap
+     * on the car screen. Returns "reboot", "dialog", or null when neither worked.
+     */
+    private fun reboot(): String? {
+        val hasSu = listOf("/system/xbin/su", "/system/bin/su", "/sbin/su", "/su/bin/su", "/debug_ramdisk/su")
+            .any { java.io.File(it).exists() }
+        if (hasSu) {
+            val ok = runCatching {
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+                // A successful reboot never returns; a refusal exits non-zero quickly.
+                !p.waitFor(8, java.util.concurrent.TimeUnit.SECONDS) || p.exitValue() == 0
+            }.getOrDefault(false)
+            if (ok) return "reboot"
+        }
+        return if (onMain { performGlobalAction(GLOBAL_ACTION_POWER_DIALOG) }) "dialog" else null
+    }
+
+    // ---- typing into the car's input box -----------------------------------------------------
+
+    /** The input box that has focus, or else the first editable box on screen. */
+    private fun focusedInput(): AccessibilityNodeInfo? {
+        findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { if (it.isEditable) return it }
+        val root = rootInActiveWindow ?: return null
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        var seen = 0
+        while (queue.isNotEmpty() && seen++ < 400) {
+            val n = queue.removeFirst()
+            if (n.isEditable && n.isVisibleToUser) return n
+            for (i in 0 until n.childCount) n.getChild(i)?.let { queue.add(it) }
+        }
+        return null
+    }
+
+    private fun hint(n: AccessibilityNodeInfo) = n.isShowingHintText
+
+    private fun editFocused(block: (AccessibilityNodeInfo) -> Boolean): Boolean {
+        val n = focusedInput() ?: return false
+        if (!n.isFocused) n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        return block(n)
+    }
+
+    private fun setText(n: AccessibilityNodeInfo, text: String, cursor: Int): Boolean {
+        val args = android.os.Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        val ok = n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (ok) runCatching {
+            n.refresh()
+            val c = cursor.coerceIn(0, n.text?.length ?: text.length)
+            n.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, android.os.Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, c)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, c)
+            })
+        }
+        return ok
+    }
+
+    private fun typeText(add: String, replace: Boolean): Boolean = editFocused { n ->
+        val (t, c) = insertText(n.text?.toString(), hint(n), n.textSelectionStart, n.textSelectionEnd, add, replace)
+        setText(n, t, c) || paste(n, add, replace)
+    }
+
+    /** Fallback for boxes that refuse SET_TEXT: put the text on the clipboard and paste it. */
+    private fun paste(n: AccessibilityNodeInfo, add: String, replace: Boolean): Boolean = runCatching {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("CarMirror", add))
+        if (replace) n.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, android.os.Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, n.text?.length ?: 0)
+        })
+        n.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+    }.getOrDefault(false)
+
+    /** The keyboard's Enter/Search/Go key (Android 11+). */
+    private fun enter(): Boolean {
+        val n = focusedInput() ?: return false
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            return n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        }
+        return false
+    }
+
     /** A finger swipe in the middle of the car screen; [up] moves the finger up (shows what is below). */
     private fun swipe(up: Boolean): Boolean {
         val dm = resources.displayMetrics
@@ -200,16 +316,18 @@ class RemoteControlService : AccessibilityService() {
 
     private fun apps(): String {
         val pm = packageManager
-        // Launchers (the car mode app may only be a HOME app) first, then ordinary apps.
+        // Launchers too: the car mode app may only be a HOME app.
         val homes = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
         val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
         val homePkgs = homes.map { it.activityInfo.packageName }.toSet()
         val list = (homes + apps)
             .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
             .distinctBy { it.first }
-            .sortedWith(compareBy({ it.first !in homePkgs }, { it.second.lowercase() }))
-        return list.joinToString(",", "[", "]") { (p, n) ->
-            "{\"p\":${jsonStr(p)},\"n\":${jsonStr(n)},\"launcher\":${p in homePkgs}}"
+        val pins = AppUsage.pins(this)
+        val now = System.currentTimeMillis()
+        val ordered = orderApps(list, pins) { AppUsage.score(this, it, now) }
+        return ordered.joinToString(",", "[", "]") { (p, n) ->
+            "{\"p\":${jsonStr(p)},\"n\":${jsonStr(n)},\"launcher\":${p in homePkgs},\"pin\":${p in pins}}"
         }
     }
 
