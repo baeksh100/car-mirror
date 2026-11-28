@@ -17,7 +17,7 @@ import javax.jmdns.ServiceInfo
  * The car's iPhone hotspot gives the cast only IPv6 (no IPv4 at all), and its global IPv6 changes
  * from drive to drive, so a typed or saved IP address would keep breaking. Safari finds ".local"
  * names over Bonjour by itself, so the home-screen icon keeps working wherever the cast is.
- * One small mDNS responder per reachable address, refreshed when the network changes.
+ * One small mDNS responder on the best link, refreshed when the network changes.
  */
 class RemoteMdns(private val context: Context) {
     private val io = Executors.newSingleThreadScheduledExecutor()
@@ -43,7 +43,13 @@ class RemoteMdns(private val context: Context) {
     }
 
     private fun refresh() {
-        val wanted = candidateAddrs().associateBy { it.addr.hostAddress ?: "" }.filterKeys { it.isNotEmpty() }
+        // ONE responder only, on the best link (the hotspot / Wi-Fi the iPhone is on). With one per
+        // interface the two copies heard each other, called it a name clash, and the Wi-Fi one
+        // renamed itself "carmirror-remote-1" — so the iPhone never got an answer for the real name.
+        val wanted = candidateAddrs().take(1).associateBy { it.addr.hostAddress ?: "" }.filterKeys { it.isNotEmpty() }
+        // A responder that lost the name in a clash ("carmirror-remote-1") is useless: start it over.
+        instances.filterValues { jm -> runCatching { !jm.hostName.startsWith("$REMOTE_HOST.") }.getOrDefault(true) }
+            .keys.toList().forEach { ip -> instances.remove(ip)?.let { runCatching { it.unregisterAllServices(); it.close() } } }
         (instances.keys - wanted.keys).toList().forEach { ip ->
             instances.remove(ip)?.let { runCatching { it.unregisterAllServices(); it.close() } }
         }
