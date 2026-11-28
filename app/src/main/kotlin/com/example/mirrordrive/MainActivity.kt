@@ -536,6 +536,13 @@ class MainActivity : AppCompatActivity() {
                 })
             }
         }
+        // Diagnostics for when QR 1 (the .local name) does not open on the iPhone.
+        box.addView(android.widget.TextView(this).apply {
+            text = "진단: 이름 ${RemoteMdns.status} / 오류 ${RemoteMdns.lastError} / Android ${android.os.Build.VERSION.SDK_INT} / ${interfaceDump()}"
+            textSize = 10f
+            setTextIsSelectable(true)
+            setPadding(0, dp(12), 0, 0)
+        })
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("아이폰 리모컨")
             .setView(android.widget.ScrollView(this).apply { addView(box) })
