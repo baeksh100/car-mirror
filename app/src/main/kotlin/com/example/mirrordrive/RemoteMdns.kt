@@ -56,14 +56,21 @@ class RemoteMdns(private val context: Context) {
                 Log.i(TAG, "remote name on ${la.text}")
             } catch (t: Throwable) {
                 Log.w(TAG, "remote name failed on ${la.text}", t)
+                lastError = "${la.ifName}: ${t.javaClass.simpleName} ${t.message ?: ""}".take(120)
             }
         }
         active = instances.isNotEmpty()
+        status = if (instances.isEmpty()) "없음 (${wanted.size}개 주소 시도)" else
+            instances.values.joinToString(", ") { jm -> runCatching { "${jm.hostName} @ ${jm.inetAddress.hostAddress}" }.getOrDefault("?") }
     }
 
     companion object {
         private const val TAG = "RemoteMdns"
         const val REMOTE_HOST = "carmirror-remote"
+
+        /** Diagnostics shown in the remote settings dialog. */
+        @Volatile var status = "시작 전"
+        @Volatile var lastError = "-"
 
         /** True while the .local name is being answered on at least one network. */
         @Volatile var active = false
