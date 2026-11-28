@@ -24,7 +24,7 @@
   header h1 { font-size: 20px; margin: 0; flex: 1; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--sub); }
   .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
-  #state { color: var(--sub); font-size: 13px; }
+  #state { color: var(--sub); font-size: 13px; cursor: pointer; }
   section { background: var(--card); border-radius: 18px; padding: 12px; margin-bottom: 12px; }
   section h2 { font-size: 13px; color: var(--sub); font-weight: 600; margin: 2px 4px 10px; }
   .row { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
@@ -164,10 +164,17 @@
       .then(function (r) { clearTimeout(t); if (!r.ok) throw new Error(r.status); return r.json(); });
   }
 
+  // After getting out of the car and back in, the cast reboots: keep trying, and when it answers
+  // again refresh what it shows. Tapping the status re-opens the page (a home-screen app has no
+  // reload button).
+  var wasOnline = null;
   function online(ok) {
     dot.className = 'dot ' + (ok ? 'ok' : 'bad');
-    state.textContent = ok ? '연결됨' : '연결 안 됨';
+    state.textContent = ok ? '연결됨' : '연결 안 됨 · 눌러서 다시 연결';
+    if (ok && wasOnline === false) { loadApps(); toast('캐스트에 다시 연결됐어요'); }
+    wasOnline = ok;
   }
+  state.addEventListener('click', function () { if (wasOnline === false) location.reload(); });
 
   // The page comes from the CarMirror app on the cast; after the app updates, reload once so the
   // home-screen remote shows the new buttons without a manual refresh.
@@ -292,8 +299,12 @@
 
   function refresh() { call('/status').then(show).catch(function () { online(false); }); }
 
-  refresh(); loadApps();
-  setInterval(function () { if (!document.hidden) refresh(); }, 5000);
+  loadApps();
+  // Every 5 s while connected, every 2 s while waiting for the cast to come back.
+  (function tick() {
+    if (!document.hidden) refresh();
+    setTimeout(tick, wasOnline === false ? 2000 : 5000);
+  })();
   document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
 })();
 </script>
